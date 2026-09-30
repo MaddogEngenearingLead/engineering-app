@@ -1,21 +1,25 @@
-text
-# Python Virtual Environments
-venv/
-.venv/
-env/
+# Python bytecode
 __pycache__/
-*.pyc
+*.py[cod]
 
-# Local Data Volumes & Caches
-postgres_data/
-staging_ollama_data/
-.ollama/
+# Virtual environments
+.venv/
+venv/
+ENV/
 
-# IDE Configuration Files
+# Environment variables
+.env
+.env.*
+
+# Editor/IDE files
 .vscode/
 .idea/
 
-# Environment Variables and Credentials
-.env
-*.pt
-*.weights
+# OS files
+.DS_Store
+Thumbs.db
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
