@@ -19,7 +19,8 @@
 
             <nav class="side-nav">
                 <button class="nav-item active" data-target="dashboard"><span>📊</span> Overview</button>
-                <button class="nav-item" data-target="equipment"><span>🛠️</span> Equipment</button>
+                <button class="nav-item" data-target="pid-viewer"><span>🔷</span> P&ID Diagram</button>
+                <button class="nav-item" data-target="equipment"><span>🔧</span> Equipment</button>
                 <button class="nav-item" data-target="pipelines"><span>🔄</span> Pipelines</button>
                 <button class="nav-item" data-target="settings"><span>⚙️</span> Settings</button>
             </nav>
@@ -145,6 +146,71 @@
                 </div>
             </section>
 
+            <section id="pid-viewer" class="panel">
+                <div class="section-header">
+                    <h2>Process & Instrumentation Diagram</h2>
+                    <div class="toolbar">
+                        <select id="diagram-select" onchange="loadDiagram(this.value)" class="diagram-select">
+                            <option value="main">Main Process Line</option>
+                            <option value="reactor">Reactor Unit</option>
+                            <option value="separator">Separator Train</option>
+                        </select>
+                        <button class="ghost-btn" onclick="resetZoom()">Reset Zoom</button>
+                    </div>
+                </div>
+
+                <div class="panel-card pid-container">
+                    <div class="pid-canvas-wrapper">
+                        <canvas id="pid-canvas"></canvas>
+                    </div>
+                    <div class="pid-legend">
+                        <div class="legend-section">
+                            <h4>Equipment</h4>
+                            <div class="legend-item"><div class="legend-symbol pump"></div><span>Pump</span></div>
+                            <div class="legend-item"><div class="legend-symbol valve"></div><span>Valve</span></div>
+                            <div class="legend-item"><div class="legend-symbol vessel"></div><span>Vessel</span></div>
+                            <div class="legend-item"><div class="legend-symbol instrument"></div><span>Instrument</span></div>
+                        </div>
+                        <div class="legend-section">
+                            <h4>Status</h4>
+                            <div class="legend-item"><div class="legend-symbol status-ok"></div><span>Operating</span></div>
+                            <div class="legend-item"><div class="legend-symbol status-warning"></div><span>Warning</span></div>
+                            <div class="legend-item"><div class="legend-symbol status-error"></div><span>Error</span></div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="asset-details-panel">
+                    <div id="selected-asset-info" class="asset-info hidden">
+                        <h3>Asset Details</h3>
+                        <div class="asset-detail-row">
+                            <label>Tag ID:</label>
+                            <span id="asset-tag">--</span>
+                        </div>
+                        <div class="asset-detail-row">
+                            <label>Type:</label>
+                            <span id="asset-type">--</span>
+                        </div>
+                        <div class="asset-detail-row">
+                            <label>Status:</label>
+                            <span id="asset-status">--</span>
+                        </div>
+                        <div class="asset-detail-row">
+                            <label>Pressure:</label>
+                            <span id="asset-pressure">--</span>
+                        </div>
+                        <div class="asset-detail-row">
+                            <label>Temperature:</label>
+                            <span id="asset-temp">--</span>
+                        </div>
+                        <div class="asset-detail-row">
+                            <label>Flow Rate:</label>
+                            <span id="asset-flow">--</span>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
             <section id="equipment" class="panel">
                 <div class="section-header">
                     <h2>Equipment Inventory</h2>
@@ -208,7 +274,7 @@
 
                     <div class="panel-card">
                         <h3>System Info</h3>
-                        <p class="info-text"><strong>Version:</strong> 0.1.0</p>
+                        <p class="info-text"><strong>Version:</strong> 0.2.0</p>
                         <p class="info-text"><strong>Last Updated:</strong> <span id="last-updated">--</span></p>
                         <button class="secondary-btn" onclick="checkHealth()">Check API Health</button>
                     </div>
@@ -286,5 +352,6 @@
     </footer>
 
     <script src="script.js"></script>
+    <script src="pid-visualizer.js"></script>
 </body>
 </html>
