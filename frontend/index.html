@@ -7,102 +7,158 @@
     <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-    <div class="container">
-        <!-- Header -->
-        <header class="header">
-            <div class="header-content">
-                <h1>🏭 Engineering Dashboard</h1>
-                <p class="subtitle">Process & Instrumentation Diagram (P&ID) Monitoring</p>
+    <div class="app-shell">
+        <aside class="sidebar">
+            <div class="brand-block">
+                <div class="brand-mark">E</div>
+                <div>
+                    <div class="brand-name">Engineering</div>
+                    <div class="brand-subtitle">P&ID Dashboard</div>
+                </div>
             </div>
-        </header>
 
-        <!-- Navigation -->
-        <nav class="navbar">
-            <ul class="nav-links">
-                <li><a href="#" class="nav-link active" onclick="showSection('dashboard')">Dashboard</a></li>
-                <li><a href="#" class="nav-link" onclick="showSection('equipment')">Equipment</a></li>
-                <li><a href="#" class="nav-link" onclick="showSection('pipelines')">Pipelines</a></li>
-                <li><a href="#" class="nav-link" onclick="showSection('settings')">Settings</a></li>
-            </ul>
-        </nav>
+            <nav class="side-nav">
+                <button class="nav-item active" data-target="dashboard"><span>📊</span> Overview</button>
+                <button class="nav-item" data-target="equipment"><span>🛠️</span> Equipment</button>
+                <button class="nav-item" data-target="pipelines"><span>🔄</span> Pipelines</button>
+                <button class="nav-item" data-target="settings"><span>⚙️</span> Settings</button>
+            </nav>
 
-        <!-- Main Content -->
-        <main class="main-content">
-            <!-- Dashboard Section -->
-            <section id="dashboard" class="section active">
-                <h2>Dashboard Overview</h2>
-                
-                <!-- KPI Cards -->
-                <div class="kpi-grid">
-                    <div class="kpi-card">
-                        <div class="kpi-icon">📦</div>
-                        <div class="kpi-info">
-                            <h3>Total Assets</h3>
-                            <p class="kpi-value" id="total-assets">0</p>
-                        </div>
+            <div class="sidebar-card">
+                <p class="card-label">System Health</p>
+                <div class="health-pill success">Nominal</div>
+                <div class="mini-grid">
+                    <div>
+                        <span class="mini-label">Alerts</span>
+                        <strong>03</strong>
                     </div>
-                    
-                    <div class="kpi-card">
-                        <div class="kpi-icon">✅</div>
-                        <div class="kpi-info">
-                            <h3>Operating</h3>
-                            <p class="kpi-value" id="operating-count">0</p>
-                        </div>
-                    </div>
-                    
-                    <div class="kpi-card">
-                        <div class="kpi-icon">⚠️</div>
-                        <div class="kpi-info">
-                            <h3>Warnings</h3>
-                            <p class="kpi-value" id="warning-count">0</p>
-                        </div>
-                    </div>
-                    
-                    <div class="kpi-card">
-                        <div class="kpi-icon">🔴</div>
-                        <div class="kpi-info">
-                            <h3>Offline</h3>
-                            <p class="kpi-value" id="offline-count">0</p>
-                        </div>
+                    <div>
+                        <span class="mini-label">Runtime</span>
+                        <strong>99.8%</strong>
                     </div>
                 </div>
+            </div>
+        </aside>
 
-                <!-- Status Chart -->
-                <div class="chart-container">
-                    <h3>System Status</h3>
-                    <div class="status-bars">
-                        <div class="status-bar">
-                            <span class="status-label">Healthy</span>
-                            <div class="bar" style="width: 70%; background: #4CAF50;"></div>
-                            <span class="bar-value">70%</span>
+        <main class="main-panel">
+            <header class="topbar">
+                <div>
+                    <p class="eyebrow">Operations Command</p>
+                    <h1>Process Integrity Overview</h1>
+                </div>
+                <div class="topbar-actions">
+                    <button class="ghost-btn" onclick="checkHealth()">Refresh status</button>
+                    <button class="primary-btn" onclick="showAddEquipmentForm()">+ Add Asset</button>
+                </div>
+            </header>
+
+            <section id="dashboard" class="panel active-panel">
+                <div class="kpi-grid">
+                    <article class="kpi-card accent-blue">
+                        <div class="kpi-icon">📦</div>
+                        <div>
+                            <p>Total Assets</p>
+                            <h3 id="total-assets">0</h3>
                         </div>
-                        <div class="status-bar">
-                            <span class="status-label">Warning</span>
-                            <div class="bar" style="width: 20%; background: #FFC107;"></div>
-                            <span class="bar-value">20%</span>
+                    </article>
+
+                    <article class="kpi-card accent-green">
+                        <div class="kpi-icon">✅</div>
+                        <div>
+                            <p>Operating</p>
+                            <h3 id="operating-count">0</h3>
                         </div>
-                        <div class="status-bar">
-                            <span class="status-label">Critical</span>
-                            <div class="bar" style="width: 10%; background: #F44336;"></div>
-                            <span class="bar-value">10%</span>
+                    </article>
+
+                    <article class="kpi-card accent-amber">
+                        <div class="kpi-icon">⚠️</div>
+                        <div>
+                            <p>Warnings</p>
+                            <h3 id="warning-count">0</h3>
                         </div>
+                    </article>
+
+                    <article class="kpi-card accent-red">
+                        <div class="kpi-icon">🛑</div>
+                        <div>
+                            <p>Offline</p>
+                            <h3 id="offline-count">0</h3>
+                        </div>
+                    </article>
+                </div>
+
+                <div class="content-grid">
+                    <div class="panel-card chart-card">
+                        <div class="card-header-row">
+                            <h2>Asset Availability</h2>
+                            <span class="chip neutral">Live</span>
+                        </div>
+                        <div class="status-bars">
+                            <div class="status-row">
+                                <span>Healthy</span>
+                                <div class="bar-wrap"><div class="bar healthy" style="width: 70%"></div></div>
+                                <strong>70%</strong>
+                            </div>
+                            <div class="status-row">
+                                <span>Warning</span>
+                                <div class="bar-wrap"><div class="bar warning" style="width: 20%"></div></div>
+                                <strong>20%</strong>
+                            </div>
+                            <div class="status-row">
+                                <span>Critical</span>
+                                <div class="bar-wrap"><div class="bar critical" style="width: 10%"></div></div>
+                                <strong>10%</strong>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="panel-card">
+                        <div class="card-header-row">
+                            <h2>Priority Alerts</h2>
+                            <span class="chip warning">3</span>
+                        </div>
+
+                        <ul class="alert-list">
+                            <li>
+                                <span class="alert-dot red"></span>
+                                <div>
+                                    <strong>Valve V-204</strong>
+                                    <p>Maintenance due in 2 days</p>
+                                </div>
+                            </li>
+                            <li>
+                                <span class="alert-dot amber"></span>
+                                <div>
+                                    <strong>Pump P-111</strong>
+                                    <p>Flow variance trending upward</p>
+                                </div>
+                            </li>
+                            <li>
+                                <span class="alert-dot blue"></span>
+                                <div>
+                                    <strong>Line 3A</strong>
+                                    <p>Inspection window scheduled</p>
+                                </div>
+                            </li>
+                        </ul>
                     </div>
                 </div>
             </section>
 
-            <!-- Equipment Section -->
-            <section id="equipment" class="section">
-                <h2>Equipment Inventory</h2>
-                <div class="action-bar">
-                    <button class="btn btn-primary" onclick="showAddEquipmentForm()">+ Add Equipment</button>
-                    <input type="text" id="search-equipment" class="search-input" placeholder="Search equipment...">
+            <section id="equipment" class="panel">
+                <div class="section-header">
+                    <h2>Equipment Inventory</h2>
+                    <div class="toolbar">
+                        <input type="text" id="search-equipment" class="search-input" placeholder="Search equipment..." />
+                        <button class="primary-btn" onclick="showAddEquipmentForm()">+ Add Equipment</button>
+                    </div>
                 </div>
-                
-                <div id="equipment-list" class="table-container">
-                    <table class="table">
+
+                <div class="panel-card">
+                    <table class="data-table">
                         <thead>
                             <tr>
-                                <th>Tag ID</th>
+                                <th>Tag</th>
                                 <th>Name</th>
                                 <th>Type</th>
                                 <th>Status</th>
@@ -112,124 +168,122 @@
                         </thead>
                         <tbody id="equipment-table-body">
                             <tr>
-                                <td colspan="6" class="empty-state">No equipment added yet. Click "Add Equipment" to get started.</td>
+                                <td colspan="6" class="empty-state">No equipment added yet.</td>
                             </tr>
                         </tbody>
                     </table>
                 </div>
-
-                <!-- Add Equipment Form -->
-                <div id="add-equipment-form" class="modal hidden">
-                    <div class="modal-content">
-                        <h3>Add New Equipment</h3>
-                        <form id="equipment-form">
-                            <div class="form-group">
-                                <label for="eq-tag">Tag ID:</label>
-                                <input type="text" id="eq-tag" required>
-                            </div>
-                            <div class="form-group">
-                                <label for="eq-name">Name:</label>
-                                <input type="text" id="eq-name" required>
-                            </div>
-                            <div class="form-group">
-                                <label for="eq-type">Type:</label>
-                                <select id="eq-type" required>
-                                    <option value="pump">Pump</option>
-                                    <option value="valve">Valve</option>
-                                    <option value="vessel">Vessel</option>
-                                    <option value="instrument">Instrument</option>
-                                    <option value="compressor">Compressor</option>
-                                </select>
-                            </div>
-                            <div class="form-group">
-                                <label for="eq-location">Location:</label>
-                                <input type="text" id="eq-location" placeholder="e.g., Unit-A, Line-01">
-                            </div>
-                            <div class="form-actions">
-                                <button type="submit" class="btn btn-primary">Save Equipment</button>
-                                <button type="button" class="btn btn-secondary" onclick="closeAddEquipmentForm()">Cancel</button>
-                            </div>
-                        </form>
-                    </div>
-                </div>
             </section>
 
-            <!-- Pipelines Section -->
-            <section id="pipelines" class="section">
-                <h2>Pipeline Status</h2>
-                <div class="action-bar">
-                    <button class="btn btn-primary" onclick="showAddPipelineForm()">+ Add Pipeline</button>
+            <section id="pipelines" class="panel">
+                <div class="section-header">
+                    <h2>Pipeline Network</h2>
+                    <button class="primary-btn" onclick="showAddPipelineForm()">+ Add Pipeline</button>
                 </div>
-                
+
                 <div id="pipelines-list" class="pipeline-grid">
-                    <div class="empty-state">No pipelines configured yet.</div>
-                </div>
-
-                <!-- Add Pipeline Form -->
-                <div id="add-pipeline-form" class="modal hidden">
-                    <div class="modal-content">
-                        <h3>Add New Pipeline</h3>
-                        <form id="pipeline-form">
-                            <div class="form-group">
-                                <label for="pipe-id">Pipeline ID:</label>
-                                <input type="text" id="pipe-id" required>
-                            </div>
-                            <div class="form-group">
-                                <label for="pipe-name">Name:</label>
-                                <input type="text" id="pipe-name" required>
-                            </div>
-                            <div class="form-group">
-                                <label for="pipe-desc">Description:</label>
-                                <textarea id="pipe-desc" rows="3"></textarea>
-                            </div>
-                            <div class="form-actions">
-                                <button type="submit" class="btn btn-primary">Create Pipeline</button>
-                                <button type="button" class="btn btn-secondary" onclick="closeAddPipelineForm()">Cancel</button>
-                            </div>
-                        </form>
-                    </div>
+                    <div class="empty-state-card">No pipelines configured yet.</div>
                 </div>
             </section>
 
-            <!-- Settings Section -->
-            <section id="settings" class="section">
-                <h2>Settings</h2>
-                <div class="settings-panel">
-                    <div class="settings-group">
+            <section id="settings" class="panel">
+                <div class="section-header">
+                    <h2>System Settings</h2>
+                </div>
+
+                <div class="settings-grid">
+                    <div class="panel-card">
                         <h3>API Configuration</h3>
-                        <div class="setting-item">
-                            <label>API Base URL:</label>
-                            <input type="text" id="api-url" value="http://127.0.0.1:8000" class="setting-input">
-                        </div>
+                        <label class="field-label">API base URL</label>
+                        <input id="api-url" value="http://127.0.0.1:8000" class="text-input" />
                     </div>
-                    
-                    <div class="settings-group">
-                        <h3>Display Options</h3>
-                        <div class="setting-item">
-                            <label>
-                                <input type="checkbox" id="dark-mode" onchange="toggleDarkMode()">
-                                Enable Dark Mode
-                            </label>
-                        </div>
+
+                    <div class="panel-card">
+                        <h3>Display</h3>
+                        <label class="checkbox-row">
+                            <input type="checkbox" id="dark-mode" onchange="toggleDarkMode()" />
+                            Enable dark mode
+                        </label>
                     </div>
-                    
-                    <div class="settings-group">
+
+                    <div class="panel-card">
                         <h3>System Info</h3>
-                        <div class="setting-item">
-                            <p><strong>Dashboard Version:</strong> 0.1.0</p>
-                            <p><strong>Last Updated:</strong> <span id="last-updated">--</span></p>
-                            <button class="btn btn-secondary" onclick="checkHealth()">Check API Health</button>
-                        </div>
+                        <p class="info-text"><strong>Version:</strong> 0.1.0</p>
+                        <p class="info-text"><strong>Last Updated:</strong> <span id="last-updated">--</span></p>
+                        <button class="secondary-btn" onclick="checkHealth()">Check API Health</button>
                     </div>
                 </div>
             </section>
         </main>
-
-        <!-- Footer -->
-        <footer class="footer">
-            <p>&copy; 2026 Engineering App | P&ID Dashboard | <span id="api-status">API: Loading...</span></p>
-        </footer>
     </div>
+
+    <div id="add-equipment-form" class="modal hidden">
+        <div class="modal-card">
+            <div class="modal-header">
+                <h3>Add Equipment</h3>
+                <button class="icon-btn" type="button" onclick="closeAddEquipmentForm()">✕</button>
+            </div>
+            <form id="equipment-form">
+                <div class="field-group">
+                    <label>Tag ID</label>
+                    <input type="text" id="eq-tag" required />
+                </div>
+                <div class="field-group">
+                    <label>Name</label>
+                    <input type="text" id="eq-name" required />
+                </div>
+                <div class="field-group">
+                    <label>Type</label>
+                    <select id="eq-type" required>
+                        <option value="pump">Pump</option>
+                        <option value="valve">Valve</option>
+                        <option value="vessel">Vessel</option>
+                        <option value="instrument">Instrument</option>
+                        <option value="compressor">Compressor</option>
+                    </select>
+                </div>
+                <div class="field-group">
+                    <label>Location</label>
+                    <input type="text" id="eq-location" placeholder="e.g. Unit A / Line 4" />
+                </div>
+                <div class="modal-actions">
+                    <button type="button" class="secondary-btn" onclick="closeAddEquipmentForm()">Cancel</button>
+                    <button type="submit" class="primary-btn">Save</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div id="add-pipeline-form" class="modal hidden">
+        <div class="modal-card">
+            <div class="modal-header">
+                <h3>Add Pipeline</h3>
+                <button class="icon-btn" type="button" onclick="closeAddPipelineForm()">✕</button>
+            </div>
+            <form id="pipeline-form">
+                <div class="field-group">
+                    <label>Pipeline ID</label>
+                    <input type="text" id="pipe-id" required />
+                </div>
+                <div class="field-group">
+                    <label>Name</label>
+                    <input type="text" id="pipe-name" required />
+                </div>
+                <div class="field-group">
+                    <label>Description</label>
+                    <textarea id="pipe-desc" rows="3"></textarea>
+                </div>
+                <div class="modal-actions">
+                    <button type="button" class="secondary-btn" onclick="closeAddPipelineForm()">Cancel</button>
+                    <button type="submit" class="primary-btn">Create</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <footer class="footer-bar">
+        <span id="api-status">API: Loading...</span>
+    </footer>
 
     <script src="script.js"></script>
 </body>
