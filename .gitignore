@@ -1,0 +1,21 @@
+text
+# Python Virtual Environments
+venv/
+.venv/
+env/
+__pycache__/
+*.pyc
+
+# Local Data Volumes & Caches
+postgres_data/
+staging_ollama_data/
+.ollama/
+
+# IDE Configuration Files
+.vscode/
+.idea/
+
+# Environment Variables and Credentials
+.env
+*.pt
+*.weights
