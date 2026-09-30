@@ -11,6 +11,9 @@ ENV/
 .env
 .env.*
 
+# Secrets and local config
+config.local.yaml
+
 # Editor/IDE files
 .vscode/
 .idea/
@@ -23,3 +26,11 @@ Thumbs.db
 build/
 dist/
 *.egg-info/
+
+# Test coverage
+.coverage
+htmlcov/
+.pytest_cache/
+
+# JSON logs
+*.log
