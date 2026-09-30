@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Engineering App - P&ID Viewer</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="app-shell">
+        <aside class="sidebar">
+            <div class="brand-block">
+                <div class="brand-mark">E</div>
+                <div>
+                    <div class="brand-name">Engineering</div>
+                    <div class="brand-subtitle">P&ID Dashboard</div>
+                </div>
+            </div>
+            <nav class="side-nav">
+                <a href="index.html" class="nav-item"><span>📊</span> Overview</a>
+                <a href="pid-viewer.html" class="nav-item active"><span>🔧</span> P&ID Diagram</a>
+                <a href="equipment.html" class="nav-item"><span>⚙️</span> Equipment</a>
+                <a href="alarms.html" class="nav-item"><span>🚨</span> Alarms</a>
+                <a href="reports.html" class="nav-item"><span>📈</span> Reports</a>
+            </nav>
+        </aside>
+
+        <main class="main-panel">
+            <header class="topbar">
+                <div>
+                    <p class="eyebrow">Process Visualization</p>
+                    <h1>P&ID Diagram</h1>
+                </div>
+                <div class="topbar-actions">
+                    <button class="ghost-btn" onclick="resetZoom()">Reset View</button>
+                </div>
+            </header>
+
+            <section class="panel active-panel">
+                <div class="pid-toolbar">
+                    <select class="diagram-select" onchange="loadDiagram(this.value)">
+                        <option value="main">Main Process Line</option>
+                        <option value="reactor">Reactor Unit</option>
+                        <option value="separator">Separator Train</option>
+                    </select>
+                    <div class="toolbar-spacer"></div>
+                    <span class="zoom-indicator">Use mouse wheel to zoom</span>
+                </div>
+
+                <div class="panel-card pid-container">
+                    <div class="pid-canvas-wrapper">
+                        <canvas id="pid-canvas"></canvas>
+                    </div>
+                    <div class="pid-legend">
+                        <div class="legend-section">
+                            <h4>Equipment</h4>
+                            <div class="legend-item"><div class="legend-symbol pump"></div><span>Pump</span></div>
+                            <div class="legend-item"><div class="legend-symbol valve"></div><span>Valve</span></div>
+                            <div class="legend-item"><div class="legend-symbol vessel"></div><span>Vessel</span></div>
+                            <div class="legend-item"><div class="legend-symbol instrument"></div><span>Instrument</span></div>
+                        </div>
+                        <div class="legend-section">
+                            <h4>Status</h4>
+                            <div class="legend-item"><div class="legend-symbol status-ok"></div><span>Operating</span></div>
+                            <div class="legend-item"><div class="legend-symbol status-warning"></div><span>Warning</span></div>
+                            <div class="legend-item"><div class="legend-symbol status-error"></div><span>Error</span></div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="asset-details-panel">
+                    <div id="selected-asset-info" class="asset-info hidden">
+                        <h3>Asset Details</h3>
+                        <div class="asset-detail-row">
+                            <label>Tag ID:</label>
+                            <span id="asset-tag">--</span>
+                        </div>
+                        <div class="asset-detail-row">
+                            <label>Type:</label>
+                            <span id="asset-type">--</span>
+                        </div>
+                        <div class="asset-detail-row">
+                            <label>Status:</label>
+                            <span id="asset-status">--</span>
+                        </div>
+                        <div class="asset-detail-row">
+                            <label>Pressure:</label>
+                            <span id="asset-pressure">--</span>
+                        </div>
+                        <div class="asset-detail-row">
+                            <label>Temperature:</label>
+                            <span id="asset-temp">--</span>
+                        </div>
+                        <div class="asset-detail-row">
+                            <label>Flow Rate:</label>
+                            <span id="asset-flow">--</span>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <script src="pid-visualizer.js"></script>
+    <script>
+        // Initialize P&ID viewer
+        window.addEventListener('DOMContentLoaded', () => {
+            PIDVisualizer.init();
+        });
+    </script>
+</body>
+</html>

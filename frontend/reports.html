@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Engineering App - Reports</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="app-shell">
+        <aside class="sidebar">
+            <div class="brand-block">
+                <div class="brand-mark">E</div>
+                <div>
+                    <div class="brand-name">Engineering</div>
+                    <div class="brand-subtitle">P&ID Dashboard</div>
+                </div>
+            </div>
+            <nav class="side-nav">
+                <a href="index.html" class="nav-item"><span>📊</span> Overview</a>
+                <a href="pid-viewer.html" class="nav-item"><span>🔧</span> P&ID Diagram</a>
+                <a href="equipment.html" class="nav-item"><span>⚙️</span> Equipment</a>
+                <a href="alarms.html" class="nav-item"><span>🚨</span> Alarms</a>
+                <a href="reports.html" class="nav-item active"><span>📈</span> Reports</a>
+            </nav>
+        </aside>
+
+        <main class="main-panel">
+            <header class="topbar">
+                <div>
+                    <p class="eyebrow">Analytics</p>
+                    <h1>Reports & Analytics</h1>
+                </div>
+                <div class="topbar-actions">
+                    <button class="primary-btn">+ Generate Report</button>
+                </div>
+            </header>
+
+            <section class="panel active-panel">
+                <div class="reports-grid">
+                    <!-- Equipment Health Report -->
+                    <div class="panel-card report-card">
+                        <div class="report-header">
+                            <h3>Equipment Health Summary</h3>
+                            <span class="chip neutral">Monthly</span>
+                        </div>
+                        <div class="report-content">
+                            <div class="chart-placeholder">
+                                <svg viewBox="0 0 300 200" style="width: 100%; height: 200px;">
+                                    <rect x="40" y="20" width="30" height="140" fill="#22c55e"/>
+                                    <rect x="85" y="60" width="30" height="100" fill="#f59e0b"/>
+                                    <rect x="130" y="90" width="30" height="70" fill="#ef4444"/>
+                                    <text x="55" y="180" font-size="12" text-anchor="middle">Healthy</text>
+                                    <text x="100" y="180" font-size="12" text-anchor="middle">Warning</text>
+                                    <text x="145" y="180" font-size="12" text-anchor="middle">Failed</text>
+                                </svg>
+                            </div>
+                            <div class="report-stats">
+                                <div class="report-stat">
+                                    <span class="stat-label">Healthy</span>
+                                    <strong style="color: #22c55e;">78%</strong>
+                                </div>
+                                <div class="report-stat">
+                                    <span class="stat-label">At Risk</span>
+                                    <strong style="color: #f59e0b;">18%</strong>
+                                </div>
+                                <div class="report-stat">
+                                    <span class="stat-label">Failed</span>
+                                    <strong style="color: #ef4444;">4%</strong>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Uptime Report -->
+                    <div class="panel-card report-card">
+                        <div class="report-header">
+                            <h3>System Uptime</h3>
+                            <span class="chip neutral">Last 30 Days</span>
+                        </div>
+                        <div class="report-content">
+                            <div class="uptime-display">
+                                <div class="uptime-percentage">99.8%</div>
+                                <div class="uptime-subtext">Operational Time</div>
+                            </div>
+                            <div class="uptime-details">
+                                <div class="detail-row">
+                                    <span>Scheduled Downtime</span>
+                                    <strong>2h 45m</strong>
+                                </div>
+                                <div class="detail-row">
+                                    <span>Unplanned Downtime</span>
+                                    <strong>18m</strong>
+                                </div>
+                                <div class="detail-row">
+                                    <span>Total Runtime</span>
+                                    <strong>720h</strong>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Maintenance Due -->
+                    <div class="panel-card report-card">
+                        <div class="report-header">
+                            <h3>Scheduled Maintenance</h3>
+                            <span class="chip warning">12</span>
+                        </div>
+                        <div class="maintenance-due-list">
+                            <div class="due-item">
+                                <div class="due-soon">Due in 7 days</div>
+                                <strong>P-101 Pump - Bearing Service</strong>
+                            </div>
+                            <div class="due-item">
+                                <div class="due-soon">Due in 14 days</div>
+                                <strong>V-204 Valve - Seal Replacement</strong>
+                            </div>
+                            <div class="due-item">
+                                <div class="due-overdue">Overdue</div>
+                                <strong>E-102 Tank - Inspection</strong>
+                            </div>
+                            <div class="due-item">
+                                <div class="due-soon">Due in 21 days</div>
+                                <strong>S-101 Separator - Filter Change</strong>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Performance Trends -->
+                    <div class="panel-card report-card" style="grid-column: 1 / -1;">
+                        <div class="report-header">
+                            <h3>Equipment Performance Trend</h3>
+                            <select class="diagram-select">
+                                <option>Last 30 Days</option>
+                                <option>Last 90 Days</option>
+                                <option>Last Year</option>
+                            </select>
+                        </div>
+                        <div class="trend-chart-placeholder">
+                            <p style="text-align: center; color: #999; padding: 40px;">📊 Performance trend chart will display here</p>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+</body>
+</html>

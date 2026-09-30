@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Engineering App - Equipment List</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="app-shell">
+        <aside class="sidebar">
+            <div class="brand-block">
+                <div class="brand-mark">E</div>
+                <div>
+                    <div class="brand-name">Engineering</div>
+                    <div class="brand-subtitle">P&ID Dashboard</div>
+                </div>
+            </div>
+            <nav class="side-nav">
+                <a href="index.html" class="nav-item"><span>📊</span> Overview</a>
+                <a href="pid-viewer.html" class="nav-item"><span>🔧</span> P&ID Diagram</a>
+                <a href="equipment.html" class="nav-item active"><span>⚙️</span> Equipment</a>
+                <a href="alarms.html" class="nav-item"><span>🚨</span> Alarms</a>
+                <a href="reports.html" class="nav-item"><span>📈</span> Reports</a>
+            </nav>
+        </aside>
+
+        <main class="main-panel">
+            <header class="topbar">
+                <div>
+                    <p class="eyebrow">Asset Management</p>
+                    <h1>Equipment Inventory</h1>
+                </div>
+                <div class="topbar-actions">
+                    <button class="primary-btn" onclick="openAddEquipmentModal()">+ Add Equipment</button>
+                </div>
+            </header>
+
+            <section class="panel active-panel">
+                <div class="filter-toolbar">
+                    <input type="search" class="search-input" placeholder="Search equipment by tag, name, or type..." />
+                    <select class="diagram-select" onchange="filterByType(this.value)">
+                        <option value="">All Types</option>
+                        <option value="pump">Pumps</option>
+                        <option value="valve">Valves</option>
+                        <option value="vessel">Vessels</option>
+                        <option value="instrument">Instruments</option>
+                    </select>
+                    <select class="diagram-select" onchange="filterByStatus(this.value)">
+                        <option value="">All Status</option>
+                        <option value="operational">Operational</option>
+                        <option value="warning">Warning</option>
+                        <option value="offline">Offline</option>
+                    </select>
+                </div>
+
+                <div class="panel-card">
+                    <table class="equipment-table">
+                        <thead>
+                            <tr>
+                                <th>Tag ID</th>
+                                <th>Name</th>
+                                <th>Type</th>
+                                <th>Status</th>
+                                <th>Location</th>
+                                <th>Pressure</th>
+                                <th>Temperature</th>
+                                <th>Flow</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td><strong>P-101</strong></td>
+                                <td>Feed Pump</td>
+                                <td>Centrifugal Pump</td>
+                                <td><span class="status-badge status-operational">Operational</span></td>
+                                <td>Unit A - Line 1</td>
+                                <td>45 PSI</td>
+                                <td>68°F</td>
+                                <td>120 GPM</td>
+                                <td>
+                                    <a href="asset-details.html?id=P-101" class="ghost-btn" style="padding: 6px 10px; font-size: 0.85rem;">View</a>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td><strong>V-101</strong></td>
+                                <td>Inlet Valve</td>
+                                <td>Ball Valve</td>
+                                <td><span class="status-badge status-operational">Operational</span></td>
+                                <td>Unit A - Line 1</td>
+                                <td>45 PSI</td>
+                                <td>68°F</td>
+                                <td>120 GPM</td>
+                                <td>
+                                    <a href="asset-details.html?id=V-101" class="ghost-btn" style="padding: 6px 10px; font-size: 0.85rem;">View</a>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td><strong>E-101</strong></td>
+                                <td>Mix Tank</td>
+                                <td>Vessel</td>
+                                <td><span class="status-badge status-operational">Operational</span></td>
+                                <td>Unit A</td>
+                                <td>50 PSI</td>
+                                <td>72°F</td>
+                                <td>120 GPM</td>
+                                <td>
+                                    <a href="asset-details.html?id=E-101" class="ghost-btn" style="padding: 6px 10px; font-size: 0.85rem;">View</a>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td><strong>I-101</strong></td>
+                                <td>Pressure Indicator</td>
+                                <td>Instrument</td>
+                                <td><span class="status-badge status-warning">Warning</span></td>
+                                <td>Unit A</td>
+                                <td>52 PSI</td>
+                                <td>--</td>
+                                <td>--</td>
+                                <td>
+                                    <a href="asset-details.html?id=I-101" class="ghost-btn" style="padding: 6px 10px; font-size: 0.85rem;">View</a>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td><strong>V-102</strong></td>
+                                <td>Outlet Valve</td>
+                                <td>Ball Valve</td>
+                                <td><span class="status-badge status-operational">Operational</span></td>
+                                <td>Unit A - Line 1</td>
+                                <td>48 PSI</td>
+                                <td>74°F</td>
+                                <td>118 GPM</td>
+                                <td>
+                                    <a href="asset-details.html?id=V-102" class="ghost-btn" style="padding: 6px 10px; font-size: 0.85rem;">View</a>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td><strong>P-102</strong></td>
+                                <td>Transfer Pump</td>
+                                <td>Centrifugal Pump</td>
+                                <td><span class="status-badge status-operational">Operational</span></td>
+                                <td>Unit A - Line 2</td>
+                                <td>48 PSI</td>
+                                <td>74°F</td>
+                                <td>118 GPM</td>
+                                <td>
+                                    <a href="asset-details.html?id=P-102" class="ghost-btn" style="padding: 6px 10px; font-size: 0.85rem;">View</a>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td><strong>R-101</strong></td>
+                                <td>Reactor Vessel</td>
+                                <td>Reactor</td>
+                                <td><span class="status-badge status-operational">Operational</span></td>
+                                <td>Unit B</td>
+                                <td>100 PSI</td>
+                                <td>185°F</td>
+                                <td>95 GPM</td>
+                                <td>
+                                    <a href="asset-details.html?id=R-101" class="ghost-btn" style="padding: 6px 10px; font-size: 0.85rem;">View</a>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td><strong>P-201</strong></td>
+                                <td>Feed Pump</td>
+                                <td>Centrifugal Pump</td>
+                                <td><span class="status-badge status-warning">Warning</span></td>
+                                <td>Unit B</td>
+                                <td>95 PSI</td>
+                                <td>180°F</td>
+                                <td>95 GPM</td>
+                                <td>
+                                    <a href="asset-details.html?id=P-201" class="ghost-btn" style="padding: 6px 10px; font-size: 0.85rem;">View</a>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <script>
+        function filterByType(type) {
+            console.log('Filtering by type: ' + type);
+        }
+        function filterByStatus(status) {
+            console.log('Filtering by status: ' + status);
+        }
+        function openAddEquipmentModal() {
+            console.log('Opening add equipment modal');
+        }
+    </script>
+</body>
+</html>

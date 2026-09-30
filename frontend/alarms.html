@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Engineering App - Alarms & Alerts</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="app-shell">
+        <aside class="sidebar">
+            <div class="brand-block">
+                <div class="brand-mark">E</div>
+                <div>
+                    <div class="brand-name">Engineering</div>
+                    <div class="brand-subtitle">P&ID Dashboard</div>
+                </div>
+            </div>
+            <nav class="side-nav">
+                <a href="index.html" class="nav-item"><span>📊</span> Overview</a>
+                <a href="pid-viewer.html" class="nav-item"><span>🔧</span> P&ID Diagram</a>
+                <a href="equipment.html" class="nav-item"><span>⚙️</span> Equipment</a>
+                <a href="alarms.html" class="nav-item active"><span>🚨</span> Alarms</a>
+                <a href="reports.html" class="nav-item"><span>📈</span> Reports</a>
+            </nav>
+        </aside>
+
+        <main class="main-panel">
+            <header class="topbar">
+                <div>
+                    <p class="eyebrow">System Monitoring</p>
+                    <h1>Alarms & Alerts</h1>
+                </div>
+                <div class="topbar-actions">
+                    <button class="ghost-btn" onclick="filterAlarms('all')">All</button>
+                    <button class="ghost-btn" onclick="filterAlarms('critical')">Critical</button>
+                    <button class="ghost-btn" onclick="filterAlarms('warning')">Warnings</button>
+                </div>
+            </header>
+
+            <section class="panel active-panel">
+                <div class="alarm-summary">
+                    <div class="alarm-stat">
+                        <div class="stat-number" style="color: #ef4444;">3</div>
+                        <div class="stat-label">Critical</div>
+                    </div>
+                    <div class="alarm-stat">
+                        <div class="stat-number" style="color: #f59e0b;">8</div>
+                        <div class="stat-label">Warnings</div>
+                    </div>
+                    <div class="alarm-stat">
+                        <div class="stat-number" style="color: #22c55e;">142</div>
+                        <div class="stat-label">Acknowledged</div>
+                    </div>
+                </div>
+
+                <div class="panel-card">
+                    <div class="card-header-row">
+                        <h3>Active Alarms</h3>
+                        <input type="search" class="search-input" placeholder="Search alarms..." style="width: 280px;" />
+                    </div>
+
+                    <div class="alarm-list">
+                        <div class="alarm-item critical">
+                            <div class="alarm-indicator"></div>
+                            <div class="alarm-content">
+                                <div class="alarm-header">
+                                    <strong>High Pressure - Reactor Vessel</strong>
+                                    <span class="alarm-time">2 min ago</span>
+                                </div>
+                                <p class="alarm-desc">Pressure exceeded 120 PSI threshold in R-101</p>
+                                <div class="alarm-tags">
+                                    <span class="tag">R-101</span>
+                                    <span class="tag">Pressure</span>
+                                    <span class="tag">High Priority</span>
+                                </div>
+                            </div>
+                            <div class="alarm-actions">
+                                <button class="ghost-btn" style="padding: 6px 10px; font-size: 0.85rem;">Acknowledge</button>
+                            </div>
+                        </div>
+
+                        <div class="alarm-item critical">
+                            <div class="alarm-indicator"></div>
+                            <div class="alarm-content">
+                                <div class="alarm-header">
+                                    <strong>Temperature Deviation - Heat Exchanger</strong>
+                                    <span class="alarm-time">15 min ago</span>
+                                </div>
+                                <p class="alarm-desc">Outlet temperature 5°F below setpoint</p>
+                                <div class="alarm-tags">
+                                    <span class="tag">E-102</span>
+                                    <span class="tag">Temperature</span>
+                                </div>
+                            </div>
+                            <div class="alarm-actions">
+                                <button class="ghost-btn" style="padding: 6px 10px; font-size: 0.85rem;">Acknowledge</button>
+                            </div>
+                        </div>
+
+                        <div class="alarm-item critical">
+                            <div class="alarm-indicator"></div>
+                            <div class="alarm-content">
+                                <div class="alarm-header">
+                                    <strong>Pump Cavitation - Feed Pump</strong>
+                                    <span class="alarm-time">28 min ago</span>
+                                </div>
+                                <p class="alarm-desc">Abnormal vibration signature detected - Possible cavitation</p>
+                                <div class="alarm-tags">
+                                    <span class="tag">P-201</span>
+                                    <span class="tag">Vibration</span>
+                                </div>
+                            </div>
+                            <div class="alarm-actions">
+                                <button class="ghost-btn" style="padding: 6px 10px; font-size: 0.85rem;">Acknowledge</button>
+                            </div>
+                        </div>
+
+                        <div class="alarm-item warning">
+                            <div class="alarm-indicator"></div>
+                            <div class="alarm-content">
+                                <div class="alarm-header">
+                                    <strong>Valve Position Deviation - V-102</strong>
+                                    <span class="alarm-time">1 hour ago</span>
+                                </div>
+                                <p class="alarm-desc">Valve position 5% below command position</p>
+                                <div class="alarm-tags">
+                                    <span class="tag">V-102</span>
+                                    <span class="tag">Control</span>
+                                </div>
+                            </div>
+                            <div class="alarm-actions">
+                                <button class="ghost-btn" style="padding: 6px 10px; font-size: 0.85rem;">Acknowledge</button>
+                            </div>
+                        </div>
+
+                        <div class="alarm-item warning">
+                            <div class="alarm-indicator"></div>
+                            <div class="alarm-content">
+                                <div class="alarm-header">
+                                    <strong>Level High - Storage Tank</strong>
+                                    <span class="alarm-time">2 hours ago</span>
+                                </div>
+                                <p class="alarm-desc">Liquid level in S-102 above 95% capacity</p>
+                                <div class="alarm-tags">
+                                    <span class="tag">S-102</span>
+                                    <span class="tag">Level</span>
+                                </div>
+                            </div>
+                            <div class="alarm-actions">
+                                <button class="ghost-btn" style="padding: 6px 10px; font-size: 0.85rem;">Acknowledge</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <script>
+        function filterAlarms(level) {
+            console.log('Filtering alarms by level: ' + level);
+        }
+    </script>
+</body>
+</html>
