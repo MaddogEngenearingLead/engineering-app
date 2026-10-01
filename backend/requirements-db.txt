@@ -1,0 +1,7 @@
+# Database dependencies
+psycopg2-binary==2.9.10
+SQLAlchemy==2.0.37
+alembic==1.14.1
+pydantic-settings==2.6.1
+py2neo==2024.2.0
+pymongo==4.9.2
