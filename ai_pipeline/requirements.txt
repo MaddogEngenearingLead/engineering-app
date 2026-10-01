@@ -1,0 +1,6 @@
+# AI Pipeline requirement set
+opencv-python-headless==4.10.0.84
+pillow==10.4.0
+pytesseract==0.3.13
+networkx==3.4.2
+numpy==2.1.4
