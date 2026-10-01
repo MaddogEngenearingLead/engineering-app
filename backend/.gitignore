@@ -1,0 +1,7 @@
+# Ignore generated local uploads and Python bytecode.
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.env
+uploads/
