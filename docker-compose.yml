@@ -1,0 +1,90 @@
+version: '3.9'
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: engineering-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: engineering_pid
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  mongo:
+    image: mongo:7
+    container_name: engineering-mongo
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+
+  neo4j:
+    image: neo4j:5.24
+    container_name: engineering-neo4j
+    restart: unless-stopped
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    environment:
+      NEO4J_AUTH: neo4j/password
+      NEO4J_dbms_memory_pagecache_size: 512M
+      NEO4J_dbms_memory_heap_initial__size: 512M
+      NEO4J_dbms_memory_heap_max__size: 1G
+    volumes:
+      - neo4j_data:/data
+      - neo4j_logs:/logs
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: engineering-backend
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/engineering_pid
+      MONGODB_URL: mongodb://mongo:27017
+      NEO4J_URL: bolt://neo4j:7687
+    depends_on:
+      - postgres
+      - mongo
+      - neo4j
+    volumes:
+      - ./backend:/app/backend
+      - ./ai_pipeline:/app/ai_pipeline
+
+  redis:
+    image: redis:7
+    container_name: engineering-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+
+  worker:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile.worker
+    container_name: engineering-worker
+    restart: unless-stopped
+    depends_on:
+      - redis
+      - postgres
+      - mongo
+      - neo4j
+    environment:
+      REDIS_URL: redis://redis:6379/0
+    volumes:
+      - ./backend:/app/backend
+      - ./ai_pipeline:/app/ai_pipeline
+
+volumes:
+  postgres_data:
+  mongo_data:
+  neo4j_data:
+  neo4j_logs:
