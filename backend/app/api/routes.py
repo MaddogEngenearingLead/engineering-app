@@ -7,9 +7,9 @@ from fastapi.responses import JSONResponse
 
 from app.core.config import settings
 from app.services.pid_processing import process_uploaded_pid
+from app.services.job_store import JOB_STORE
 
 router = APIRouter()
-JOB_STORE: dict[str, dict[str, Any]] = {}
 
 
 @router.get("/health")
@@ -30,7 +30,7 @@ async def upload_pid(file: UploadFile = File(...)) -> dict[str, Any]:
     upload_path.mkdir(parents=True, exist_ok=True)
 
     file_ext = file.filename.rsplit(".", 1)[-1].lower() if "." in file.filename else ""
-    allowed_exts = {"pdf", "png", "jpg", "jpeg", "svg"}
+    allowed_exts = {"pdf", "png", "jpg", "jpeg", "svg", "gif"}
     if file_ext not in allowed_exts:
         raise HTTPException(status_code=400, detail="Unsupported file type.")
 
@@ -59,27 +59,28 @@ async def upload_pid(file: UploadFile = File(...)) -> dict[str, Any]:
 async def scan_pid(file: UploadFile = File(...)) -> dict[str, Any]:
     upload_result = await upload_pid(file)
     file_path = upload_result["saved_path"]
-    job_id = f"pid-job-{len(JOB_STORE) + 1:04d}"
+    job_id = f"pid-job-{len(JOB_STORE._jobs) + 1:04d}"
 
     result = process_uploaded_pid(file_path)
     result["job_id"] = job_id
-    JOB_STORE[job_id] = result
+    JOB_STORE.add(job_id, result)
 
     return {
         "job_id": job_id,
         "status": "completed",
-        "message": "P&ID scan job processed successfully.",
+        "message": "Engineering document scan processed successfully.",
         "source_file": file_path,
         "detected_assets": result.get("detected_assets", []),
         "materials": result.get("materials", []),
         "total_items": result.get("total_items", 0),
         "estimated_total_cost": result.get("estimated_total_cost", 0.0),
+        "page_count": result.get("pipeline_output", {}).get("pages_processed", 0),
     }
 
 
 @router.get("/materials")
 def get_materials() -> dict[str, Any]:
-    latest_job = next(reversed(JOB_STORE.values()), None)
+    latest_job = JOB_STORE.latest()
     if latest_job and latest_job.get("materials"):
         return {
             "materials": latest_job["materials"],
