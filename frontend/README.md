@@ -29,3 +29,9 @@ Currently uses browser localStorage for data persistence. Equipment and pipeline
 - Equipment health analytics and trending
 - Alarm and notification system
 - User authentication and role-based access
+
+## P&ID scan UI (React + Vite + Tailwind)
+
+`npm install && npm run dev` (proxies `/api` to `http://localhost:8000`); `npm run build` outputs to `dist/`.
+Implements upload → processing → results / clarification → edit-override → BOM review against the `/api/scan` contract.
+The PDF download link expects the backend to serve `bom_pdf` at `/api/bom-pdf?path=...`.
