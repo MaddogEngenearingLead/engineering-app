@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import uuid
 from pathlib import Path
 from fastapi import APIRouter, File, UploadFile, HTTPException, Form
@@ -10,6 +11,7 @@ from app.config import settings
 from app.services.scope_bom import build_scoped_bom
 
 router = APIRouter(tags=["engineering"])
+logger = logging.getLogger(__name__)
 
 
 def sanitize_filename(filename: str) -> str:
@@ -202,7 +204,10 @@ async def scan_pid(
             job_id=job_id,
             source_file=source_file,
         )
+    except ValueError as error:
+        return _scan_failure(str(error), 400)
     except Exception:
+        logger.exception("Scoped BOM scan failed.")
         return _scan_failure("P&ID scan could not be completed.", 422)
     needs_clarification = result["needs_clarification"]
     status = "failed" if result["export_status"] == "failed" else (

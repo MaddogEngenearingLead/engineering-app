@@ -174,6 +174,21 @@ class ScopeBomTests(unittest.TestCase):
         self.assertEqual(result["export_status"], "not_generated")
         self.assertEqual(result["materials"], [])
 
+    @patch("app.services.scope_bom.export_bom_to_pdf", return_value="/tmp/bom.pdf")
+    @patch("app.services.scope_bom.extract_content_signatures")
+    def test_specialized_level_switch_description_is_preserved(self, extract, _export):
+        extract.return_value = [{
+            "page": 1,
+            "text": "Instrument Legend",
+            "tags": [{"tag": "LSL-1", "type": "level_switch_low", "confidence": 0.85}],
+            "tag_set": {"LSL-1"},
+            "colours": [],
+        }]
+        result = scope_bom.build_scoped_bom(
+            "source.pdf", job_id="job-low-switch", source_file="source.pdf"
+        )
+        self.assertEqual(result["materials"][0]["description"], "Level Switch (Low)")
+
 
 class ScanRouteTests(unittest.TestCase):
     def setUp(self):
@@ -228,6 +243,19 @@ class ScanRouteTests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 400)
         self.assertIn("clarification_prompts", response.json())
+
+    def test_scan_reports_out_of_range_overrides_as_client_error(self):
+        with patch(
+            "app.api.routes.build_scoped_bom",
+            side_effect=ValueError("Page overrides are outside the document range."),
+        ):
+            response = self.client.post(
+                "/api/scan",
+                files={"file": ("drawing.pdf", b"%PDF", "application/pdf")},
+                data={"demo_pages": "2"},
+            )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("outside the document range", response.json()["message"])
 
     def test_scan_rejects_unsupported_upload(self):
         response = self.client.post(

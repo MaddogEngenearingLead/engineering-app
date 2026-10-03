@@ -61,7 +61,7 @@ LEGEND_KEYWORDS = {
     "symbol key": 3,
     "instrumentation": 1,
 }
-TAG_PATTERN = re.compile(r"\b([A-Z]{1,6})\s*-?\s*(\d{1,4})\b", re.IGNORECASE)
+TAG_PATTERN = re.compile(r"\b([A-Z]{1,6})[ \t]{0,8}-?[ \t]{0,8}(\d{1,4})\b", re.IGNORECASE)
 
 
 def _normalize_colour(value: Any) -> str | None:
@@ -269,16 +269,26 @@ def classify_pages(
             "colours": colours,
             "tags": sorted(signature.get("tag_set", set())),
         })
-    for index, page in enumerate(classifications):
-        pairs = []
-        tags = set(page["tags"])
-        for other in classifications:
-            if other["page"] == page["page"]:
-                continue
-            similarity = _jaccard(tags, set(other["tags"]))
+    similar_pages: list[list[dict[str, Any]]] = [[] for _ in classifications]
+    tag_sets = [set(page["tags"]) for page in classifications]
+    for left in range(len(classifications)):
+        for right in range(left + 1, len(classifications)):
+            similarity = _jaccard(tag_sets[left], tag_sets[right])
             if similarity > 0:
-                pairs.append({"page": other["page"], "similarity": round(similarity, 3)})
-        page["similar_pages"] = sorted(pairs, key=lambda pair: (-pair["similarity"], pair["page"]))
+                left_pair = {
+                    "page": classifications[right]["page"],
+                    "similarity": round(similarity, 3),
+                }
+                right_pair = {
+                    "page": classifications[left]["page"],
+                    "similarity": round(similarity, 3),
+                }
+                similar_pages[left].append(left_pair)
+                similar_pages[right].append(right_pair)
+    for page, pairs in zip(classifications, similar_pages):
+        page["similar_pages"] = sorted(
+            pairs, key=lambda pair: (-pair["similarity"], pair["page"])
+        )
     return classifications
 
 
@@ -301,7 +311,9 @@ def cross_check_scope(
     ambiguous = []
     for tag in matches:
         tag_info = next(item for item in tags if item["tag"].upper() == tag)
-        pages = tag_info.get("pages", [tag_info.get("page")])
+        pages = tag_info.get("pages") or (
+            [tag_info["page"]] if tag_info.get("page") is not None else []
+        )
         evidence = [
             {
                 "page": page,
@@ -375,11 +387,13 @@ def build_scoped_bom(
     tags = list(tags_by_name.values())
     materials = generate_bom_from_tags(tags)
     classification_by_page = {page["page"]: page for page in pages}
-    for material, tag in zip(materials, tags):
+    tags_by_id = {tag["tag"]: tag for tag in tags}
+    for material in materials:
+        tag = tags_by_id.get(material["tag_id"])
+        if tag is None:
+            continue
         decoded = decode_instrument_tag(tag["tag"])
-        if tag.get("type", "") not in {
-            "level_switch_low", "level_switch_high", "level_switch_high_high"
-        } and tag.get("type", "").endswith(("indicator", "sensor", "element", "switch")):
+        if tag.get("type", "").endswith(("indicator", "sensor", "element", "switch")):
             material["description"] = decoded["description"]
             material["description_confidence"] = decoded["confidence"]
             material["description_source"] = decoded["source"]
