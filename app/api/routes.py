@@ -1,12 +1,12 @@
 from __future__ import annotations
 
+import json
 import uuid
 from pathlib import Path
 from fastapi import APIRouter, File, UploadFile, HTTPException, Form
 
 from app.config import settings
-from app.services.pid_extraction import extract_text_from_pdf, extract_tags_from_text, generate_bom_from_tags
-from app.services.bom_export import export_bom_to_pdf
+from app.services.scope_bom import build_scoped_bom
 
 router = APIRouter(tags=["engineering"])
 
@@ -19,6 +19,44 @@ def sanitize_filename(filename: str) -> str:
     for char in dangerous_chars:
         sanitized = sanitized.replace(char, '_')
     return sanitized
+
+
+def _parse_page_numbers(value: str, field_name: str) -> list[int]:
+    if not value.strip():
+        return []
+    try:
+        parsed = json.loads(value) if value.lstrip().startswith("[") else value.split(",")
+    except json.JSONDecodeError as error:
+        raise HTTPException(status_code=400, detail=f"{field_name} must be a JSON array or comma-separated list.") from error
+    if not isinstance(parsed, list):
+        raise HTTPException(status_code=400, detail=f"{field_name} must be a list of positive page numbers.")
+    pages = []
+    for page in parsed:
+        if isinstance(page, bool):
+            raise HTTPException(status_code=400, detail=f"{field_name} must contain positive integers.")
+        try:
+            number = int(page)
+        except (TypeError, ValueError) as error:
+            raise HTTPException(status_code=400, detail=f"{field_name} must contain positive integers.") from error
+        if number <= 0 or str(page).strip() != str(number):
+            raise HTTPException(status_code=400, detail=f"{field_name} must contain positive integers.")
+        if number not in pages:
+            pages.append(number)
+    return pages
+
+
+def _parse_highlight_mapping(value: str) -> dict[str, str]:
+    if not value.strip():
+        return {}
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError as error:
+        raise HTTPException(status_code=400, detail="highlight_mapping must be a JSON object.") from error
+    if not isinstance(parsed, dict) or not all(
+        isinstance(key, str) and isinstance(item, str) for key, item in parsed.items()
+    ):
+        raise HTTPException(status_code=400, detail="highlight_mapping must map string keys to string values.")
+    return parsed
 
 
 @router.get("/health")
@@ -95,16 +133,16 @@ async def scan_pid(
     file: UploadFile = File(...),
     scope_of_work: str = Form(default=""),
     review_notes: str = Form(default=""),
+    demo_pages: str = Form(default=""),
+    new_work_pages: str = Form(default=""),
+    highlight_mapping: str = Form(default=""),
 ) -> dict[str, object]:
-    """
-    Scan a P&ID file and extract equipment/BOM data using text extraction.
-    Generates a professional PDF report.
-    
-    Args:
-        file: P&ID file (PDF or image)
-        scope_of_work: Description of the scope of work for this project
-        review_notes: Comma-separated list of items or notes requiring review
-    """
+    """Scan a P&ID and build a scoped BOM, including clarification and export status."""
+    parsed_demo_pages = _parse_page_numbers(demo_pages, "demo_pages")
+    parsed_new_pages = _parse_page_numbers(new_work_pages, "new_work_pages")
+    parsed_highlight_mapping = _parse_highlight_mapping(highlight_mapping)
+    notes_list = [note.strip() for note in review_notes.split(",") if note.strip()]
+
     # First upload the file
     upload_result = await upload_pid(file)
     file_id = upload_result["file_id"]
@@ -112,61 +150,65 @@ async def scan_pid(
     source_file = upload_result["original_filename"]
     job_id = f"job-{file_id}"
 
-    # Extract text from PDF
-    extracted_text = extract_text_from_pdf(file_path)
-
-    # Extract tags from text
-    detected_assets = extract_tags_from_text(extracted_text)
-
-    # Parse review notes from comma-separated string
-    notes_list = [note.strip() for note in review_notes.split(",") if note.strip()]
-
-    # If no tags were found, return a helpful message
-    if not detected_assets:
-        return {
-            "job_id": job_id,
-            "status": "completed",
-            "message": "P&ID scan completed. No equipment tags detected with current extraction methods.",
-            "source_file": source_file,
-            "file_id": file_id,
-            "detected_assets": [],
-            "materials": [],
-            "total_items": 0,
-            "extraction_method": "text_extraction",
-            "note": "Consider using image-based OCR or manual tag entry for better results.",
-            "bom_pdf": None,
-        }
-
-    # Generate BOM from extracted tags (no pricing)
-    materials = generate_bom_from_tags(detected_assets)
-
-    # Export BOM to PDF
-    bom_pdf_path = None
     try:
-        bom_pdf_path = export_bom_to_pdf(
+        result = build_scoped_bom(
+            pdf_path=file_path,
+            scope_of_work=scope_of_work,
+            demo_pages=parsed_demo_pages,
+            new_work_pages=parsed_new_pages,
+            highlight_mapping=parsed_highlight_mapping,
+            review_notes=notes_list,
             job_id=job_id,
             source_file=source_file,
-            materials=materials,
-            scope_of_work=scope_of_work,
-            review_notes=notes_list,
         )
-    except Exception as e:
-        print(f"Warning: BOM PDF export failed: {e}")
-
+    except Exception as error:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "job_id": job_id,
+                "status": "failed",
+                "message": "P&ID scan could not be completed.",
+                "source_file": source_file,
+                "file_id": file_id,
+                "materials": [],
+                "total_items": 0,
+                "needs_clarification": False,
+                "clarification_prompts": [],
+                "bom_pdf": None,
+                "export_status": "not_generated",
+                "error": str(error),
+            },
+        ) from error
+    needs_clarification = result["needs_clarification"]
+    status = "failed" if result["export_status"] == "failed" else (
+        "needs_clarification" if needs_clarification else "completed"
+    )
     return {
         "job_id": job_id,
-        "status": "completed",
-        "message": "P&ID scan completed successfully. BOM PDF generated.",
+        "status": status,
+        "message": (
+            "P&ID scan completed; review the clarification prompts."
+            if needs_clarification else
+            "P&ID scan completed successfully."
+        ),
         "source_file": source_file,
         "file_id": file_id,
-        "detected_assets": detected_assets,
-        "materials": materials,
-        "total_items": len(materials),
+        "detected_assets": result["materials"],
+        "materials": result["materials"],
+        "total_items": len(result["materials"]),
         "extraction_method": "text_extraction",
-        "extracted_text_length": len(extracted_text),
+        "extracted_text_length": result["extracted_text_length"],
         "scope_of_work": scope_of_work,
         "review_notes": notes_list,
-        "bom_pdf": bom_pdf_path,
+        "page_classifications": result["page_classifications"],
+        "scope_check": result["scope_check"],
+        "legend": result["legend"],
+        "colour_analysis": result["colour_analysis"],
+        "needs_clarification": needs_clarification,
+        "clarification_prompts": result["clarification_prompts"],
+        "bom_pdf": result["bom_pdf"],
+        "export_status": result["export_status"],
+        "export_error": result["export_error"],
     }
 
 
