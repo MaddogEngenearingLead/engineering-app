@@ -91,7 +91,7 @@ async def upload_pid(file: UploadFile = File(...)) -> dict[str, object]:
 
 @router.post("/scan")
 async def scan_pid(file: UploadFile = File(...)) -> dict[str, object]:
-    """Scan a P&ID file and extract equipment/BOM data using OCR and text extraction."""
+    """Scan a P&ID file and extract equipment/BOM data using text extraction."""
     # First upload the file
     upload_result = await upload_pid(file)
     file_id = upload_result["file_id"]
@@ -114,16 +114,12 @@ async def scan_pid(file: UploadFile = File(...)) -> dict[str, object]:
             "detected_assets": [],
             "materials": [],
             "total_items": 0,
-            "estimated_total_cost": 0.0,
             "extraction_method": "text_extraction",
             "note": "Consider using image-based OCR or manual tag entry for better results.",
         }
 
-    # Generate BOM from extracted tags
+    # Generate BOM from extracted tags (no pricing)
     materials = generate_bom_from_tags(detected_assets)
-
-    # Calculate total cost
-    total_cost = sum(item["total_cost"] for item in materials)
 
     return {
         "job_id": f"job-{file_id}",
@@ -134,7 +130,6 @@ async def scan_pid(file: UploadFile = File(...)) -> dict[str, object]:
         "detected_assets": detected_assets,
         "materials": materials,
         "total_items": len(materials),
-        "estimated_total_cost": total_cost,
         "extraction_method": "text_extraction",
         "extracted_text_length": len(extracted_text),
     }
@@ -142,45 +137,27 @@ async def scan_pid(file: UploadFile = File(...)) -> dict[str, object]:
 
 @router.get("/materials")
 def get_materials() -> dict[str, object]:
-    """Get the most recent BOM materials."""
+    """Get the most recent BOM materials (placeholder sample data)."""
     return {
         "materials": [
             {
                 "item_number": 1,
-                "tag_id": "P-101",
+                "tag_id": "TK-1",
+                "description": "Storage Tank",
+                "type": "tank",
+                "quantity": 1,
+                "unit": "ea",
+            },
+            {
+                "item_number": 2,
+                "tag_id": "JFSP-1",
                 "description": "Centrifugal Pump",
                 "type": "pump",
                 "quantity": 1,
                 "unit": "ea",
-                "supplier": "Flowserve",
-                "unit_cost": 2500.0,
-                "total_cost": 2500.0,
-            },
-            {
-                "item_number": 2,
-                "tag_id": "V-201",
-                "description": "Gate Valve",
-                "type": "valve",
-                "quantity": 2,
-                "unit": "ea",
-                "supplier": "Emerson",
-                "unit_cost": 350.0,
-                "total_cost": 700.0,
-            },
-            {
-                "item_number": 3,
-                "tag_id": "E-301",
-                "description": "Pressure Vessel",
-                "type": "vessel",
-                "quantity": 1,
-                "unit": "ea",
-                "supplier": "ASME Certified",
-                "unit_cost": 5000.0,
-                "total_cost": 5000.0,
             },
         ],
-        "total_items": 3,
-        "estimated_total_cost": 8200.0,
+        "total_items": 2,
     }
 
 
