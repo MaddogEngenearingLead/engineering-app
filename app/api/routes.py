@@ -8,7 +8,11 @@ from fastapi import APIRouter, File, UploadFile, HTTPException, Form
 from fastapi.responses import JSONResponse
 
 from app.config import settings
-from app.services.scope_bom import ScopeOverrideError, build_scoped_bom
+from app.services.scope_bom import (
+    EXPORT_FAILURE_MESSAGE,
+    ScopeOverrideError,
+    build_scoped_bom,
+)
 
 router = APIRouter(tags=["engineering"])
 logger = logging.getLogger(__name__)
@@ -181,14 +185,14 @@ async def scan_pid(
         parsed_new_pages = _parse_page_numbers(new_work_pages, "new_work_pages")
         parsed_highlight_mapping = _parse_highlight_mapping(highlight_mapping)
     except HTTPException as error:
-        return _scan_failure(str(error.detail), error.status_code)
+        return _scan_failure("Invalid scan parameters.", error.status_code)
     notes_list = [note.strip() for note in review_notes.split(",") if note.strip()]
 
     # First upload the file
     try:
         upload_result = await upload_pid(file)
     except HTTPException as error:
-        return _scan_failure("The uploaded file is invalid or exceeds the allowed size.", error.status_code)
+        return _scan_failure("The uploaded file was rejected by validation.", error.status_code)
     file_id = upload_result["file_id"]
     file_path = upload_result["saved_path"]
     source_file = upload_result["original_filename"]
@@ -207,8 +211,6 @@ async def scan_pid(
         )
     except ScopeOverrideError as error:
         return _scan_failure(str(error), 400)
-    except ValueError:
-        return _scan_failure("Invalid P&ID document or page override values.", 400)
     except Exception:
         logger.exception("Scoped BOM scan failed.")
         return _scan_failure("P&ID scan could not be completed due to a server error.", 500)
@@ -220,7 +222,7 @@ async def scan_pid(
         "job_id": job_id,
         "status": status,
         "message": (
-            "P&ID scan completed, but the BOM PDF export failed."
+            f"P&ID scan completed; {EXPORT_FAILURE_MESSAGE}"
             if result["export_status"] == "failed" else
             "P&ID scan completed; review the clarification prompts."
             if needs_clarification else
@@ -244,7 +246,7 @@ async def scan_pid(
         "clarification_prompts": result["clarification_prompts"],
         "bom_pdf": result["bom_pdf"],
         "export_status": result["export_status"],
-        "export_error": "BOM PDF export failed." if result["export_error"] else None,
+        "export_error": result["export_error"] or None,
     }
 
 

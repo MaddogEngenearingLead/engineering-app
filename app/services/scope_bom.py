@@ -74,6 +74,7 @@ SCOPE_TAG_PATTERN = re.compile(
     rf"\b({SCOPE_PREFIX_PATTERN})[ \t]{{0,8}}-?[ \t]{{0,8}}(\d{{1,4}})\b",
     re.IGNORECASE,
 )
+EXPORT_FAILURE_MESSAGE = "BOM PDF export failed."
 DECODED_INSTRUMENT_TYPES = {
     "pressure_sensor",
     "pressure_indicator",
@@ -384,14 +385,14 @@ def build_scoped_bom(
     source_file: str,
 ) -> dict[str, Any]:
     """Build a scoped BOM and return evidence, clarification, and export status."""
-    signatures = extract_content_signatures(pdf_path)
-    page_count = len(signatures)
     conflicting_pages = sorted(set(demo_pages or []) & set(new_work_pages or []))
     if conflicting_pages:
         raise ScopeOverrideError(
             "Pages cannot be designated as both demo and new work: "
             + ", ".join(map(str, conflicting_pages))
         )
+    signatures = extract_content_signatures(pdf_path)
+    page_count = len(signatures)
     invalid_pages = sorted(
         page for page in (demo_pages or []) + (new_work_pages or [])
         if page < 1 or page > page_count
@@ -511,7 +512,7 @@ def build_scoped_bom(
             )
         except Exception:
             logger.exception("BOM PDF export failed.")
-            export_error = "BOM PDF export failed."
+            export_error = EXPORT_FAILURE_MESSAGE
     return {
         "detected_assets": tags,
         "materials": materials,

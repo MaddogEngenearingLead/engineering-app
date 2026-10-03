@@ -135,7 +135,7 @@ class ScopeBomTests(unittest.TestCase):
         self.assertTrue(result["needs_clarification"])
         self.assertTrue(any("legend" in prompt.lower() for prompt in result["clarification_prompts"]))
         self.assertEqual(result["export_status"], "failed")
-        self.assertEqual(result["export_error"], "BOM PDF export failed.")
+        self.assertEqual(result["export_error"], scope_bom.EXPORT_FAILURE_MESSAGE)
 
     @patch("app.services.scope_bom.extract_content_signatures", return_value=[])
     def test_page_override_outside_document_range_is_rejected(self, _extract):
