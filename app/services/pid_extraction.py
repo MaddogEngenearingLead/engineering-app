@@ -14,9 +14,9 @@ except ImportError:
 VALID_PREFIXES = {
     # Tanks and vessels
     "TK", "E", "V",
-    # Pumps
-    "JFSP", "JFLP", "P", "C",
-    # Valves
+    # Pumps (multi-letter only to avoid false positives)
+    "JFSP", "JFLP", "C",
+    # Valves (multi-letter)
     "MOV", "PRV", "TRV", "PV", "POV",
     # Vents and drains
     "EV", "HPV", "LPD",
@@ -24,9 +24,7 @@ VALID_PREFIXES = {
     "LI", "PI", "PS", "TI", "FI", "PE", "FE", "ME",
     "LS", "LSL", "LSH", "LSHH",
     # Other equipment
-    "FS", "F", "S", "POSP",
-    # Generic single letters (may need refinement)
-    "R", "H", "K", "T",
+    "FS", "POSP",
 }
 
 # Denylist of false positives to explicitly exclude
@@ -170,19 +168,12 @@ def infer_equipment_type(prefix: str) -> str:
 
         # Other equipment
         "FS": "filter_separator",
-        "F": "filter",
-        "S": "strainer",
         "POSP": "pump_outlet_shutoff_pressure",
 
         # Generic fallbacks
-        "P": "pump",
         "V": "valve",
         "E": "vessel",
         "C": "compressor",
-        "T": "temperature_sensor",
-        "R": "regulator",
-        "H": "heater",
-        "K": "cooler",
     }
 
     return type_map.get(prefix, "equipment")
@@ -220,12 +211,9 @@ def generate_bom_from_tags(tags: list[dict[str, object]]) -> list[dict[str, obje
         "pressure_relief_valve": "Pressure Relief Valve",
         "temperature_relief_valve": "Temperature Relief Valve",
         "filter_separator": "Filter/Separator",
-        "filter": "Filter",
-        "strainer": "Strainer",
         "pump_outlet_shutoff_pressure": "Pump Outlet Shutoff Pressure",
-        "regulator": "Regulator",
-        "heater": "Heater",
-        "cooler": "Cooler",
+        "compressor": "Compressor",
+        "vessel": "Vessel",
         "equipment": "Equipment",
     }
 
