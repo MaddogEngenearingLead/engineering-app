@@ -4,6 +4,8 @@ import re
 import logging
 from typing import Any
 
+from reportlab.platypus.doctemplate import LayoutError
+
 from app.services.bom_export import export_bom_to_pdf
 from app.services.pid_extraction import (
     VALID_PREFIXES,
@@ -93,6 +95,10 @@ class ScopeOverrideError(ValueError):
     pass
 
 
+class InvalidDocumentError(ValueError):
+    pass
+
+
 def _normalize_colour(value: Any) -> str | None:
     if isinstance(value, str):
         normalized = value.strip().lower().lstrip("#")
@@ -144,29 +150,44 @@ def extract_content_signatures(pdf_path: str) -> list[dict[str, Any]]:
     if pdfplumber is None:
         raise RuntimeError("PDF processing requires the pdfplumber dependency.")
     signatures = []
-    with pdfplumber.open(pdf_path) as pdf:
-        for page_number, page in enumerate(pdf.pages, start=1):
-            text = page.extract_text() or ""
-            tags = extract_tags_from_text(text)
-            colours = set()
-            for character in page.chars:
-                colour = _normalize_colour(
-                    character.get("non_stroking_color", character.get("stroking_color"))
-                )
-                if colour:
-                    colours.add(colour)
-            for annotation in page.annots or []:
-                for key in ("color", " C", "C"):
-                    colour = _normalize_colour(annotation.get(key))
+    colour_cache = {}
+
+    def normalize_cached(value: Any) -> str | None:
+        try:
+            hash(value)
+            cache_key = (type(value), value)
+        except TypeError:
+            cache_key = repr(value)
+        if cache_key not in colour_cache:
+            colour_cache[cache_key] = _normalize_colour(value)
+        return colour_cache[cache_key]
+
+    try:
+        with pdfplumber.open(pdf_path) as pdf:
+            for page_number, page in enumerate(pdf.pages, start=1):
+                text = page.extract_text() or ""
+                tags = extract_tags_from_text(text)
+                colours = set()
+                for character in page.chars:
+                    colour = normalize_cached(
+                        character.get("non_stroking_color", character.get("stroking_color"))
+                    )
                     if colour:
                         colours.add(colour)
-            signatures.append({
-                "page": page_number,
-                "text": text,
-                "tags": tags,
-                "tag_set": {tag["tag"] for tag in tags},
-                "colours": sorted(colours),
-            })
+                for annotation in page.annots or []:
+                    for key in ("color", " C", "C"):
+                        colour = normalize_cached(annotation.get(key))
+                        if colour:
+                            colours.add(colour)
+                signatures.append({
+                    "page": page_number,
+                    "text": text,
+                    "tags": tags,
+                    "tag_set": {tag["tag"] for tag in tags},
+                    "colours": sorted(colours),
+                })
+    except Exception as error:
+        raise InvalidDocumentError("The uploaded file is not a readable PDF.") from error
     return signatures
 
 
@@ -334,19 +355,20 @@ def cross_check_scope(
     classifications: list[dict[str, Any]],
 ) -> dict[str, Any]:
     """Match tag references in the stated scope against extracted drawing tags."""
-    extracted = {_normalize_tag(tag["tag"]): tag["tag"] for tag in tags}
+    extracted = {_normalize_tag(tag["tag"]): tag for tag in tags}
     page_classifications = {page["page"]: page for page in classifications}
     mentioned = []
     for match in SCOPE_TAG_PATTERN.finditer(scope_of_work.upper()):
         normalized = _normalize_tag(match.group())
         if normalized not in mentioned:
             mentioned.append(normalized)
-    matches = [tag for tag in mentioned if tag in extracted]
+    matched_keys = [tag for tag in mentioned if tag in extracted]
+    matches = [extracted[tag]["tag"] for tag in matched_keys]
     unmatched = [tag for tag in mentioned if tag not in extracted]
     tag_evidence = {}
     ambiguous = []
-    for tag in matches:
-        tag_info = next(item for item in tags if _normalize_tag(item["tag"]) == tag)
+    for tag in matched_keys:
+        tag_info = extracted[tag]
         pages = tag_info.get("pages") or (
             [tag_info["page"]] if tag_info.get("page") is not None else []
         )
@@ -362,7 +384,7 @@ def cross_check_scope(
         tag_evidence[tag] = evidence
         work_classes = {item["work_class"] for item in evidence if item["work_class"]}
         if len(work_classes) > 1:
-            ambiguous.append(tag)
+            ambiguous.append(tag_info["tag"])
     return {
         "mentioned_tags": mentioned,
         "matched_tags": matches,
@@ -510,7 +532,7 @@ def build_scoped_bom(
                 scope_of_work=scope_of_work,
                 review_notes=prompts,
             )
-        except Exception:
+        except (OSError, LayoutError, ValueError):
             logger.exception("BOM PDF export failed.")
             export_error = EXPORT_FAILURE_MESSAGE
     return {

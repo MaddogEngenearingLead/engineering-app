@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 from app.config import settings
 from app.services.scope_bom import (
     EXPORT_FAILURE_MESSAGE,
+    InvalidDocumentError,
     ScopeOverrideError,
     build_scoped_bom,
 )
@@ -185,14 +186,22 @@ async def scan_pid(
         parsed_new_pages = _parse_page_numbers(new_work_pages, "new_work_pages")
         parsed_highlight_mapping = _parse_highlight_mapping(highlight_mapping)
     except HTTPException as error:
-        return _scan_failure("Invalid scan parameters.", error.status_code)
+        return _scan_failure(
+            "Invalid scan parameters; check page numbers and highlight mapping.",
+            error.status_code,
+        )
     notes_list = [note.strip() for note in review_notes.split(",") if note.strip()]
 
     # First upload the file
     try:
         upload_result = await upload_pid(file)
     except HTTPException as error:
-        return _scan_failure("The uploaded file was rejected by validation.", error.status_code)
+        message = (
+            "Uploaded file exceeds the configured size limit."
+            if error.status_code == 413 else
+            "Upload a supported file type with a valid filename."
+        )
+        return _scan_failure(message, error.status_code)
     file_id = upload_result["file_id"]
     file_path = upload_result["saved_path"]
     source_file = upload_result["original_filename"]
@@ -209,8 +218,10 @@ async def scan_pid(
             job_id=job_id,
             source_file=source_file,
         )
-    except ScopeOverrideError as error:
-        return _scan_failure(str(error), 400)
+    except ScopeOverrideError:
+        return _scan_failure("Page overrides conflict or fall outside the document range.", 400)
+    except InvalidDocumentError:
+        return _scan_failure("The uploaded file is not a readable PDF.", 400)
     except Exception:
         logger.exception("Scoped BOM scan failed.")
         return _scan_failure("P&ID scan could not be completed due to a server error.", 500)

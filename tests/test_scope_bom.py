@@ -158,6 +158,13 @@ class ScopeBomTests(unittest.TestCase):
         self.assertIn("PI-101", signatures[0]["tag_set"])
         self.assertIn("red", signatures[0]["colours"])
 
+    def test_unreadable_pdf_raises_typed_document_error(self):
+        with tempfile.TemporaryDirectory() as directory:
+            pdf_path = Path(directory) / "invalid.pdf"
+            pdf_path.write_bytes(b"not a PDF")
+            with self.assertRaises(scope_bom.InvalidDocumentError):
+                scope_bom.extract_content_signatures(str(pdf_path))
+
     def test_pdf_export_creates_file(self):
         with tempfile.TemporaryDirectory() as directory:
             output = scope_bom.export_bom_to_pdf(
@@ -292,7 +299,7 @@ class ScanRouteTests(unittest.TestCase):
                 data={"demo_pages": "2"},
             )
         self.assertEqual(response.status_code, 400)
-        self.assertIn("outside the document range", response.json()["message"])
+        self.assertIn("Page overrides conflict", response.json()["message"])
 
     def test_scan_hides_internal_processing_errors(self):
         with self.assertLogs("app.api.routes", level="ERROR"):
@@ -310,6 +317,14 @@ class ScanRouteTests(unittest.TestCase):
             files={"file": ("drawing.txt", b"text", "text/plain")},
         )
         self.assertEqual(response.status_code, 400)
+
+    def test_scan_rejects_unreadable_pdf(self):
+        response = self.client.post(
+            "/api/scan",
+            files={"file": ("drawing.pdf", b"not a PDF", "application/pdf")},
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["message"], "The uploaded file is not a readable PDF.")
 
 
 if __name__ == "__main__":
