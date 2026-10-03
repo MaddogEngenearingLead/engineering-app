@@ -118,9 +118,10 @@ class ScopeBomTests(unittest.TestCase):
             "tag_set": {"PI-101"},
             "colours": [],
         }]
-        result = scope_bom.build_scoped_bom(
-            "source.pdf", job_id="job-2", source_file="source.pdf"
-        )
+        with self.assertLogs("app.services.scope_bom", level="ERROR"):
+            result = scope_bom.build_scoped_bom(
+                "source.pdf", job_id="job-2", source_file="source.pdf"
+            )
         self.assertTrue(result["needs_clarification"])
         self.assertTrue(any("legend" in prompt.lower() for prompt in result["clarification_prompts"]))
         self.assertEqual(result["export_status"], "failed")
@@ -189,6 +190,29 @@ class ScopeBomTests(unittest.TestCase):
         )
         self.assertEqual(result["materials"][0]["description"], "Level Switch (Low)")
 
+    @patch("app.services.scope_bom.export_bom_to_pdf", return_value="/tmp/bom.pdf")
+    @patch("app.services.scope_bom.extract_content_signatures")
+    def test_tag_with_conflicting_page_classes_is_ambiguous(self, extract, _export):
+        tag = {"tag": "PI-101", "type": "pressure_indicator", "confidence": 0.85}
+        extract.return_value = [
+            {"page": 1, "text": "Instrument Legend", "tags": [tag],
+             "tag_set": {"PI-101"}, "colours": []},
+            {"page": 2, "text": "", "tags": [tag],
+             "tag_set": {"PI-101"}, "colours": []},
+        ]
+        result = scope_bom.build_scoped_bom(
+            "source.pdf",
+            demo_pages=[1],
+            new_work_pages=[2],
+            job_id="job-ambiguous",
+            source_file="source.pdf",
+        )
+        material = result["materials"][0]
+        self.assertIsNone(material["work_class"])
+        self.assertEqual(material["classification_source"], "ambiguous_pages")
+        self.assertEqual(result["ambiguous_material_tags"], ["PI-101"])
+        self.assertTrue(result["needs_clarification"])
+
 
 class ScanRouteTests(unittest.TestCase):
     def setUp(self):
@@ -206,6 +230,7 @@ class ScanRouteTests(unittest.TestCase):
             "detected_assets": [],
             "materials": [],
             "page_classifications": [],
+            "ambiguous_material_tags": [],
             "scope_check": {"status": "matched"},
             "legend": {"found": True},
             "colour_analysis": {"meanings": {}},
@@ -255,7 +280,17 @@ class ScanRouteTests(unittest.TestCase):
                 data={"demo_pages": "2"},
             )
         self.assertEqual(response.status_code, 400)
-        self.assertIn("outside the document range", response.json()["message"])
+        self.assertIn("Invalid P&ID", response.json()["message"])
+
+    def test_scan_hides_internal_processing_errors(self):
+        with self.assertLogs("app.api.routes", level="ERROR"):
+            with patch("app.api.routes.build_scoped_bom", side_effect=RuntimeError("secret internal detail")):
+                response = self.client.post(
+                    "/api/scan",
+                    files={"file": ("drawing.pdf", b"%PDF", "application/pdf")},
+                )
+        self.assertEqual(response.status_code, 500)
+        self.assertNotIn("secret internal detail", response.text)
 
     def test_scan_rejects_unsupported_upload(self):
         response = self.client.post(

@@ -84,6 +84,7 @@ def _scan_failure(message: str, status_code: int) -> JSONResponse:
             "scope_of_work": "",
             "review_notes": [],
             "page_classifications": [],
+            "ambiguous_material_tags": [],
             "scope_check": None,
             "legend": None,
             "colour_analysis": None,
@@ -180,14 +181,14 @@ async def scan_pid(
         parsed_new_pages = _parse_page_numbers(new_work_pages, "new_work_pages")
         parsed_highlight_mapping = _parse_highlight_mapping(highlight_mapping)
     except HTTPException as error:
-        return _scan_failure(str(error.detail), error.status_code)
+        return _scan_failure("Invalid scan parameters.", error.status_code)
     notes_list = [note.strip() for note in review_notes.split(",") if note.strip()]
 
     # First upload the file
     try:
         upload_result = await upload_pid(file)
     except HTTPException as error:
-        return _scan_failure(str(error.detail), error.status_code)
+        return _scan_failure("The uploaded file is invalid or exceeds the allowed size.", error.status_code)
     file_id = upload_result["file_id"]
     file_path = upload_result["saved_path"]
     source_file = upload_result["original_filename"]
@@ -204,11 +205,11 @@ async def scan_pid(
             job_id=job_id,
             source_file=source_file,
         )
-    except ValueError as error:
-        return _scan_failure(str(error), 400)
+    except ValueError:
+        return _scan_failure("Invalid P&ID document or page override values.", 400)
     except Exception:
         logger.exception("Scoped BOM scan failed.")
-        return _scan_failure("P&ID scan could not be completed.", 422)
+        return _scan_failure("P&ID scan could not be completed due to a server error.", 500)
     needs_clarification = result["needs_clarification"]
     status = "failed" if result["export_status"] == "failed" else (
         "needs_clarification" if needs_clarification else "completed"
@@ -233,6 +234,7 @@ async def scan_pid(
         "scope_of_work": scope_of_work,
         "review_notes": notes_list,
         "page_classifications": result["page_classifications"],
+        "ambiguous_material_tags": result["ambiguous_material_tags"],
         "scope_check": result["scope_check"],
         "legend": result["legend"],
         "colour_analysis": result["colour_analysis"],

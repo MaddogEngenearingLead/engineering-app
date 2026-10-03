@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import logging
 from typing import Any
 
 from app.services.bom_export import export_bom_to_pdf
@@ -62,6 +63,18 @@ LEGEND_KEYWORDS = {
     "instrumentation": 1,
 }
 TAG_PATTERN = re.compile(r"\b([A-Z]{1,6})[ \t]{0,8}-?[ \t]{0,8}(\d{1,4})\b", re.IGNORECASE)
+DECODED_INSTRUMENT_TYPES = {
+    "pressure_sensor",
+    "pressure_indicator",
+    "pressure_element",
+    "temperature_indicator",
+    "flow_indicator",
+    "flow_element",
+    "level_indicator",
+    "level_switch",
+    "measurement_element",
+}
+logger = logging.getLogger(__name__)
 
 
 def _normalize_colour(value: Any) -> str | None:
@@ -388,22 +401,49 @@ def build_scoped_bom(
     materials = generate_bom_from_tags(tags)
     classification_by_page = {page["page"]: page for page in pages}
     tags_by_id = {tag["tag"]: tag for tag in tags}
+    ambiguous_material_tags = []
     for material in materials:
         tag = tags_by_id.get(material["tag_id"])
         if tag is None:
             continue
         decoded = decode_instrument_tag(tag["tag"])
-        if tag.get("type", "").endswith(("indicator", "sensor", "element", "switch")):
+        if tag.get("type") in DECODED_INSTRUMENT_TYPES:
             material["description"] = decoded["description"]
             material["description_confidence"] = decoded["confidence"]
             material["description_source"] = decoded["source"]
         else:
             material["description_confidence"] = tag.get("confidence", 0.85)
             material["description_source"] = tag.get("source", "tag_type_mapping")
-        page = classification_by_page.get(tag.get("page"))
-        material["work_class"] = page["work_class"] if page else None
-        material["classification_source"] = page["source"] if page else "unknown"
+        source_pages = tag.get("pages") or [tag.get("page")]
+        source_pages = [page_number for page_number in source_pages if page_number is not None]
+        page_evidence = [
+            classification_by_page[page_number]
+            for page_number in source_pages
+            if page_number in classification_by_page
+        ]
+        work_classes = {page["work_class"] for page in page_evidence if page["work_class"]}
+        if len(work_classes) > 1:
+            material["work_class"] = None
+            material["classification_source"] = "ambiguous_pages"
+            material["classification_candidates"] = [
+                {
+                    "page": page["page"],
+                    "work_class": page["work_class"],
+                    "source": page["source"],
+                }
+                for page in page_evidence
+            ]
+            ambiguous_material_tags.append(material["tag_id"])
+        else:
+            work_class = next(iter(work_classes), None)
+            page = next(
+                (item for item in page_evidence if item["work_class"] == work_class),
+                page_evidence[0] if page_evidence else None,
+            )
+            material["work_class"] = work_class
+            material["classification_source"] = page["source"] if page else "unknown"
         material["source_page"] = tag.get("page")
+        material["source_pages"] = source_pages
     scope_check = cross_check_scope(scope_of_work, tags, pages)
     prompts = []
     if tags and not legend["found"]:
@@ -426,6 +466,12 @@ def build_scoped_bom(
             + ", ".join(scope_check["ambiguous_tags"])
             + "."
         )
+    if ambiguous_material_tags:
+        prompts.append(
+            "Clarify tags classified differently across drawing pages: "
+            + ", ".join(ambiguous_material_tags)
+            + "."
+        )
     if not tags:
         prompts.append("No equipment tags were extracted; provide OCR text or confirm the source drawing.")
     prompts.extend(review_notes or [])
@@ -442,10 +488,12 @@ def build_scoped_bom(
                 review_notes=prompts,
             )
         except Exception as error:
+            logger.exception("BOM PDF export failed.")
             export_error = str(error)
     return {
         "detected_assets": tags,
         "materials": materials,
+        "ambiguous_material_tags": ambiguous_material_tags,
         "page_classifications": pages,
         "scope_check": scope_check,
         "legend": legend,
