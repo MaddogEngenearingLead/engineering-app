@@ -6,6 +6,7 @@ from fastapi import APIRouter, File, UploadFile, HTTPException
 
 from app.config import settings
 from app.services.pid_extraction import extract_text_from_pdf, extract_tags_from_text, generate_bom_from_tags
+from app.services.bom_export import export_bom_to_json, export_bom_to_csv, export_bom_to_html
 
 router = APIRouter(tags=["engineering"])
 
@@ -96,6 +97,8 @@ async def scan_pid(file: UploadFile = File(...)) -> dict[str, object]:
     upload_result = await upload_pid(file)
     file_id = upload_result["file_id"]
     file_path = upload_result["saved_path"]
+    source_file = upload_result["original_filename"]
+    job_id = f"job-{file_id}"
 
     # Extract text from PDF
     extracted_text = extract_text_from_pdf(file_path)
@@ -106,32 +109,44 @@ async def scan_pid(file: UploadFile = File(...)) -> dict[str, object]:
     # If no tags were found, return a helpful message
     if not detected_assets:
         return {
-            "job_id": f"job-{file_id}",
+            "job_id": job_id,
             "status": "completed",
             "message": "P&ID scan completed. No equipment tags detected with current extraction methods.",
-            "source_file": upload_result["original_filename"],
+            "source_file": source_file,
             "file_id": file_id,
             "detected_assets": [],
             "materials": [],
             "total_items": 0,
             "extraction_method": "text_extraction",
             "note": "Consider using image-based OCR or manual tag entry for better results.",
+            "bom_exports": {},
         }
 
     # Generate BOM from extracted tags (no pricing)
     materials = generate_bom_from_tags(detected_assets)
 
+    # Export BOM to all formats
+    bom_exports = {}
+    try:
+        bom_exports["json"] = export_bom_to_json(job_id, materials)
+        bom_exports["csv"] = export_bom_to_csv(job_id, materials)
+        bom_exports["html"] = export_bom_to_html(job_id, source_file, materials)
+    except Exception as e:
+        # Log error but don't fail the scan
+        print(f"Warning: BOM export failed: {e}")
+
     return {
-        "job_id": f"job-{file_id}",
+        "job_id": job_id,
         "status": "completed",
         "message": "P&ID scan completed successfully.",
-        "source_file": upload_result["original_filename"],
+        "source_file": source_file,
         "file_id": file_id,
         "detected_assets": detected_assets,
         "materials": materials,
         "total_items": len(materials),
         "extraction_method": "text_extraction",
         "extracted_text_length": len(extracted_text),
+        "bom_exports": bom_exports,
     }
 
 
