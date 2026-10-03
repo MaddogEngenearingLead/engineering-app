@@ -1,11 +1,22 @@
 from __future__ import annotations
 
+import uuid
 from pathlib import Path
 from fastapi import APIRouter, File, UploadFile, HTTPException
 
 from app.config import settings
 
 router = APIRouter(tags=["engineering"])
+
+
+def sanitize_filename(filename: str) -> str:
+    """Remove potentially dangerous characters from filename."""
+    # Replace path separators and other dangerous chars
+    dangerous_chars = ['/', '\\', '..', ':', '*', '?', '"', '<', '>', '|']
+    sanitized = filename
+    for char in dangerous_chars:
+        sanitized = sanitized.replace(char, '_')
+    return sanitized
 
 
 @router.get("/health")
@@ -56,14 +67,21 @@ async def upload_pid(file: UploadFile = File(...)) -> dict[str, object]:
             detail=f"File exceeds maximum allowed size of {settings.max_upload_size_mb} MB.",
         )
 
+    # Generate unique filename with sanitization
+    file_id = str(uuid.uuid4())[:8]
+    sanitized_name = sanitize_filename(file.filename)
+    unique_filename = f"{file_id}_{sanitized_name}"
+    file_path = upload_path / unique_filename
+
     # Save file
-    file_path = upload_path / file.filename
     file_path.write_bytes(content)
 
     return {
         "status": "success",
         "message": "File uploaded successfully.",
-        "filename": file.filename,
+        "file_id": file_id,
+        "original_filename": file.filename,
+        "saved_filename": unique_filename,
         "saved_path": str(file_path),
         "content_type": file.content_type,
         "size_bytes": file_size,
@@ -75,15 +93,17 @@ async def scan_pid(file: UploadFile = File(...)) -> dict[str, object]:
     """Scan a P&ID file and extract equipment/BOM data."""
     # First upload the file
     upload_result = await upload_pid(file)
+    file_id = upload_result["file_id"]
 
     # Mock scan results for now
-    job_id = f"job-{hash(file.filename) % 10000:04d}"
+    job_id = f"job-{file_id}"
 
     return {
         "job_id": job_id,
         "status": "completed",
         "message": "P&ID scan completed successfully.",
-        "source_file": upload_result["filename"],
+        "source_file": upload_result["original_filename"],
+        "file_id": file_id,
         "detected_assets": [
             {"tag": "P-101", "type": "pump", "confidence": 0.95},
             {"tag": "V-201", "type": "valve", "confidence": 0.92},
