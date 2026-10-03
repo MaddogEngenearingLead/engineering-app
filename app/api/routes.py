@@ -1,12 +1,18 @@
 from __future__ import annotations
 
+import json
+import tempfile
 import uuid
 from pathlib import Path
+from fastapi.concurrency import run_in_threadpool
 from fastapi import APIRouter, File, UploadFile, HTTPException, Form
 
 from app.config import settings
 from app.services.pid_extraction import extract_text_from_pdf, extract_tags_from_text, generate_bom_from_tags
 from app.services.bom_export import export_bom_to_pdf
+from app.services.scope_bom import (
+    load_pid, load_scope_text, parse_highlight_mapping, run_scope_bom,
+)
 
 router = APIRouter(tags=["engineering"])
 
@@ -168,6 +174,60 @@ async def scan_pid(
         "review_notes": notes_list,
         "bom_pdf": bom_pdf_path,
     }
+
+
+@router.post("/scope-bom")
+async def scope_bom(
+    pid_file: UploadFile = File(...),
+    scope_file: UploadFile = File(...),
+    legend_page: int | None = Form(default=None),
+    key_page: int | None = Form(default=None),
+    highlight_mapping: str = Form(default=""),
+) -> dict[str, object]:
+    """
+    Scope-aware BOM from a P&ID PDF and a scope-of-work document.
+
+    Runs autonomously and returns status "needs_clarification" with `ask_user`
+    only when the legend, highlight colours or demo/new pairing cannot be
+    determined. Re-submit with `legend_page`, `key_page` (1-based) or
+    `highlight_mapping` (JSON: {"colours": {"yellow": "new"}, "pages": {"2": "demo"},
+    "pairs": [[2, 4]]}).
+    """
+    if not (pid_file.filename or "").lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="pid_file must be a PDF.")
+    scope_ext = Path(scope_file.filename or "").suffix.lower()
+    if scope_ext not in {".docx", ".txt"}:
+        raise HTTPException(status_code=400, detail="scope_file must be .docx or .txt.")
+    try:
+        mapping = parse_highlight_mapping(highlight_mapping)
+    except (ValueError, json.JSONDecodeError) as e:
+        raise HTTPException(status_code=400, detail=f"Invalid highlight_mapping: {e}")
+
+    max_bytes = settings.max_upload_size_mb * 1024 * 1024
+    pid_bytes = await pid_file.read(max_bytes + 1)
+    scope_bytes = await scope_file.read(max_bytes + 1)
+    if len(pid_bytes) > max_bytes or len(scope_bytes) > max_bytes:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File exceeds maximum allowed size of {settings.max_upload_size_mb} MB.",
+        )
+
+    with tempfile.TemporaryDirectory() as tmp:
+        pid_path = Path(tmp) / "pid.pdf"
+        scope_path = Path(tmp) / f"scope{scope_ext}"
+        pid_path.write_bytes(pid_bytes)
+        scope_path.write_bytes(scope_bytes)
+        try:
+            pages = await run_in_threadpool(load_pid, str(pid_path))
+            scope_text = await run_in_threadpool(load_scope_text, str(scope_path))
+        except RuntimeError as e:
+            raise HTTPException(status_code=500, detail=str(e))
+        except Exception as e:
+            raise HTTPException(status_code=422, detail="Could not read the P&ID or scope file.") from e
+
+    result = await run_in_threadpool(run_scope_bom, pages, scope_text, legend_page, key_page, mapping)
+    result["source_file"] = pid_file.filename
+    return result
 
 
 @router.get("/materials")
