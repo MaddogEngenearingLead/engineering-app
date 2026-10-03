@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from xml.sax.saxutils import escape
 from pathlib import Path
 from datetime import datetime
 from reportlab.lib.pagesizes import letter
@@ -17,6 +18,7 @@ def export_bom_to_pdf(
     materials: list[dict],
     scope_of_work: str = "",
     review_notes: list[str] = None,
+    scope_report: dict | None = None,
     output_dir: str = "bom_exports",
 ) -> str:
     """
@@ -29,6 +31,7 @@ def export_bom_to_pdf(
         materials: List of material dictionaries from generate_bom_from_tags()
         scope_of_work: Description of the scope of work
         review_notes: List of items/notes that need review or clarification
+        scope_report: Optional result of build_scoped_bom (page classification, colours, flags)
         output_dir: Directory to save the export file
     
     Returns:
@@ -163,6 +166,9 @@ def export_bom_to_pdf(
     elements.append(materials_table)
     elements.append(Spacer(1, 0.2*inch))
     
+    if scope_report:
+        elements.extend(_scope_report_elements(scope_report, heading_style, normal_style, warning_style))
+
     # Review Notes / Items Requiring Attention
     if review_notes:
         elements.append(Paragraph("⚠ Items Requiring Review/Clarification", warning_style))
@@ -186,3 +192,48 @@ def export_bom_to_pdf(
     doc.build(elements)
     
     return str(file_path)
+
+
+def _scope_report_elements(report: dict, heading_style, normal_style, warning_style) -> list:
+    """Page classification, content differences, colour detection and flags sections."""
+    def p(text: str, style=normal_style):
+        return Paragraph(escape(text), style)
+
+    els = [Paragraph("Page Classification", heading_style)]
+    method = report.get("classification_method", "unknown")
+    if report.get("user_override"):
+        method = "user input"
+    els.append(p(f"Method: {method}; confidence: {report.get('classification_confidence', 0):.0%}"))
+    els.append(p(f"Demo (pre-work) pages: {report.get('demo_pages') or 'none'}"))
+    els.append(p(f"New work (post-work) pages: {report.get('new_work_pages') or 'none'}"))
+
+    diff = report.get("content_differences") or {}
+    els.append(Paragraph("Content Differences (demo vs. new work)", heading_style))
+    for label in ("added", "removed", "unchanged"):
+        els.append(p(f"Tags {label}: {', '.join(diff.get(label, [])) or 'none'}"))
+
+    colour = report.get("colour_detection") or {}
+    els.append(Paragraph("Colour Detection", heading_style))
+    meanings = colour.get("colour_meanings") or {}
+    if meanings:
+        for key, info in meanings.items():
+            els.append(p(f"{key}: {info['meaning']} (confidence {info['confidence']:.0%})"))
+        els.append(p(f"Source: {colour.get('source', 'auto')}; filtering applied: "
+                     f"{'yes' if report.get('colour_filtering_applied') else 'no'}"))
+    else:
+        els.append(p("Colours unknown: no colour annotations detected. All items are included "
+                     "and flagged for manual review."))
+
+    legend = report.get("legend") or {}
+    if legend.get("found"):
+        els.append(p(f"Legend identified on page {legend['page']}."))
+    else:
+        els.append(p("Legend / identification key was not found."))
+
+    flags = report.get("flags") or []
+    if flags:
+        els.append(Paragraph("Flags", warning_style))
+        for f in flags:
+            els.append(p(f"• [{f['type']}] {f['message']} (pages {f['pages']}, "
+                         f"{f['classification_method']}, {f['classification_confidence']:.0%})"))
+    return els

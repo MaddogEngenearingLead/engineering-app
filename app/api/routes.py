@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import uuid
 from pathlib import Path
 from fastapi import APIRouter, File, UploadFile, HTTPException, Form
@@ -7,6 +8,7 @@ from fastapi import APIRouter, File, UploadFile, HTTPException, Form
 from app.config import settings
 from app.services.pid_extraction import extract_text_from_pdf, extract_tags_from_text, generate_bom_from_tags
 from app.services.bom_export import export_bom_to_pdf
+from app.services.scope_bom import build_scoped_bom
 
 router = APIRouter(tags=["engineering"])
 
@@ -90,11 +92,39 @@ async def upload_pid(file: UploadFile = File(...)) -> dict[str, object]:
     }
 
 
+def parse_page_list(value: str, name: str) -> list[int]:
+    """Parse '2,3' or '[2, 3]' into a list of 1-based page numbers."""
+    value = value.strip()
+    if not value:
+        return []
+    try:
+        parsed = json.loads(value) if value.startswith("[") else [int(v) for v in value.split(",") if v.strip()]
+        return [int(v) for v in parsed]
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=422, detail=f"{name} must be a list of page numbers, e.g. 2,3")
+
+
+def parse_highlight_mapping(value: str) -> dict[str, str]:
+    value = value.strip()
+    if not value:
+        return {}
+    try:
+        mapping = json.loads(value)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="highlight_mapping must be a JSON object")
+    if not isinstance(mapping, dict) or not all(isinstance(v, str) for v in mapping.values()):
+        raise HTTPException(status_code=422, detail="highlight_mapping must map colour to meaning")
+    return {str(k): v for k, v in mapping.items()}
+
+
 @router.post("/scan")
 async def scan_pid(
     file: UploadFile = File(...),
     scope_of_work: str = Form(default=""),
     review_notes: str = Form(default=""),
+    demo_pages: str = Form(default=""),
+    new_work_pages: str = Form(default=""),
+    highlight_mapping: str = Form(default=""),
 ) -> dict[str, object]:
     """
     Scan a P&ID file and extract equipment/BOM data using text extraction.
@@ -104,7 +134,18 @@ async def scan_pid(
         file: P&ID file (PDF or image)
         scope_of_work: Description of the scope of work for this project
         review_notes: Comma-separated list of items or notes requiring review
+        demo_pages: Optional 1-based demo/pre-work page numbers (overrides auto-detection)
+        new_work_pages: Optional 1-based new-work/post-work page numbers
+        highlight_mapping: Optional JSON object mapping colour to meaning,
+            e.g. {"[0,1,0]": "new_work", "[1,0,0]": "demo"}
+
+    For PDFs, demo vs. new-work pages are detected by content comparison. If that is
+    ambiguous the response has status "needs_clarification"; resubmit with
+    demo_pages / new_work_pages.
     """
+    demo_list = parse_page_list(demo_pages, "demo_pages")
+    new_list = parse_page_list(new_work_pages, "new_work_pages")
+    mapping = parse_highlight_mapping(highlight_mapping)
     # First upload the file
     upload_result = await upload_pid(file)
     file_id = upload_result["file_id"]
@@ -112,14 +153,47 @@ async def scan_pid(
     source_file = upload_result["original_filename"]
     job_id = f"job-{file_id}"
 
+    notes_list = [note.strip() for note in review_notes.split(",") if note.strip()]
+
+    if file_path.lower().endswith(".pdf"):
+        try:
+            scoped = build_scoped_bom(file_path, scope_of_work, demo_list, new_list, mapping)
+        except RuntimeError as e:
+            raise HTTPException(status_code=500, detail=str(e))
+        base = {"job_id": job_id, "source_file": source_file, "file_id": file_id}
+        if scoped["status"] == "needs_clarification":
+            return {**base, **scoped}
+        materials = scoped["materials"]
+        bom_pdf_path = None
+        try:
+            bom_pdf_path = export_bom_to_pdf(
+                job_id=job_id,
+                source_file=source_file,
+                materials=materials,
+                scope_of_work=scope_of_work,
+                review_notes=notes_list,
+                scope_report=scoped,
+            )
+        except Exception as e:
+            print(f"Warning: BOM PDF export failed: {e}")
+        return {
+            **base,
+            **scoped,
+            "status": "completed",
+            "message": "Scope-aware BOM generated.",
+            "detected_assets": scoped["tags"],
+            "total_items": len(materials),
+            "extraction_method": "scope_aware_content_comparison",
+            "scope_of_work": scope_of_work,
+            "review_notes": notes_list,
+            "bom_pdf": bom_pdf_path,
+        }
+
     # Extract text from PDF
     extracted_text = extract_text_from_pdf(file_path)
 
     # Extract tags from text
     detected_assets = extract_tags_from_text(extracted_text)
-
-    # Parse review notes from comma-separated string
-    notes_list = [note.strip() for note in review_notes.split(",") if note.strip()]
 
     # If no tags were found, return a helpful message
     if not detected_assets:
