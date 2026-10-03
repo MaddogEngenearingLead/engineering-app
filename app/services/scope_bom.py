@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import re
-from pathlib import Path
 from typing import Any
 
 from app.services.bom_export import export_bom_to_pdf
@@ -304,6 +303,16 @@ def build_scoped_bom(
 ) -> dict[str, Any]:
     """Build a scoped BOM and return evidence, clarification, and export status."""
     signatures = extract_content_signatures(pdf_path)
+    page_count = len(signatures)
+    invalid_pages = sorted(
+        page for page in (demo_pages or []) + (new_work_pages or [])
+        if page < 1 or page > page_count
+    )
+    if invalid_pages:
+        raise ValueError(
+            f"Page overrides are outside the document range (1-{page_count}): "
+            + ", ".join(map(str, invalid_pages))
+        )
     legend = score_legend_candidates(signatures)
     colour_result = detect_colour_meanings(signatures, legend)
     pages = classify_pages(
@@ -369,6 +378,7 @@ def build_scoped_bom(
         except Exception as error:
             export_error = str(error)
     return {
+        "detected_assets": tags,
         "materials": materials,
         "page_classifications": pages,
         "scope_check": scope_check,

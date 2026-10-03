@@ -193,7 +193,7 @@ async def scan_pid(
         ),
         "source_file": source_file,
         "file_id": file_id,
-        "detected_assets": result["materials"],
+        "detected_assets": result["detected_assets"],
         "materials": result["materials"],
         "total_items": len(result["materials"]),
         "extraction_method": "text_extraction",
