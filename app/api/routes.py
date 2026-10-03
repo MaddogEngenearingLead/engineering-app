@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import uuid
 from pathlib import Path
-from fastapi import APIRouter, File, UploadFile, HTTPException
+from fastapi import APIRouter, File, UploadFile, HTTPException, Form
 
 from app.config import settings
 from app.services.pid_extraction import extract_text_from_pdf, extract_tags_from_text, generate_bom_from_tags
-from app.services.bom_export import export_bom_to_json, export_bom_to_csv, export_bom_to_html
+from app.services.bom_export import export_bom_to_pdf
 
 router = APIRouter(tags=["engineering"])
 
@@ -91,8 +91,20 @@ async def upload_pid(file: UploadFile = File(...)) -> dict[str, object]:
 
 
 @router.post("/scan")
-async def scan_pid(file: UploadFile = File(...)) -> dict[str, object]:
-    """Scan a P&ID file and extract equipment/BOM data using text extraction."""
+async def scan_pid(
+    file: UploadFile = File(...),
+    scope_of_work: str = Form(default=""),
+    review_notes: str = Form(default=""),
+) -> dict[str, object]:
+    """
+    Scan a P&ID file and extract equipment/BOM data using text extraction.
+    Generates a professional PDF report.
+    
+    Args:
+        file: P&ID file (PDF or image)
+        scope_of_work: Description of the scope of work for this project
+        review_notes: Comma-separated list of items or notes requiring review
+    """
     # First upload the file
     upload_result = await upload_pid(file)
     file_id = upload_result["file_id"]
@@ -105,6 +117,9 @@ async def scan_pid(file: UploadFile = File(...)) -> dict[str, object]:
 
     # Extract tags from text
     detected_assets = extract_tags_from_text(extracted_text)
+
+    # Parse review notes from comma-separated string
+    notes_list = [note.strip() for note in review_notes.split(",") if note.strip()]
 
     # If no tags were found, return a helpful message
     if not detected_assets:
@@ -119,26 +134,29 @@ async def scan_pid(file: UploadFile = File(...)) -> dict[str, object]:
             "total_items": 0,
             "extraction_method": "text_extraction",
             "note": "Consider using image-based OCR or manual tag entry for better results.",
-            "bom_exports": {},
+            "bom_pdf": None,
         }
 
     # Generate BOM from extracted tags (no pricing)
     materials = generate_bom_from_tags(detected_assets)
 
-    # Export BOM to all formats
-    bom_exports = {}
+    # Export BOM to PDF
+    bom_pdf_path = None
     try:
-        bom_exports["json"] = export_bom_to_json(job_id, materials)
-        bom_exports["csv"] = export_bom_to_csv(job_id, materials)
-        bom_exports["html"] = export_bom_to_html(job_id, source_file, materials)
+        bom_pdf_path = export_bom_to_pdf(
+            job_id=job_id,
+            source_file=source_file,
+            materials=materials,
+            scope_of_work=scope_of_work,
+            review_notes=notes_list,
+        )
     except Exception as e:
-        # Log error but don't fail the scan
-        print(f"Warning: BOM export failed: {e}")
+        print(f"Warning: BOM PDF export failed: {e}")
 
     return {
         "job_id": job_id,
         "status": "completed",
-        "message": "P&ID scan completed successfully.",
+        "message": "P&ID scan completed successfully. BOM PDF generated.",
         "source_file": source_file,
         "file_id": file_id,
         "detected_assets": detected_assets,
@@ -146,7 +164,9 @@ async def scan_pid(file: UploadFile = File(...)) -> dict[str, object]:
         "total_items": len(materials),
         "extraction_method": "text_extraction",
         "extracted_text_length": len(extracted_text),
-        "bom_exports": bom_exports,
+        "scope_of_work": scope_of_work,
+        "review_notes": notes_list,
+        "bom_pdf": bom_pdf_path,
     }
 
 
