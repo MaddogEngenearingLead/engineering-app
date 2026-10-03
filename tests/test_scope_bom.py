@@ -6,8 +6,9 @@ from pathlib import Path
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
+from reportlab.lib.colors import red
+from reportlab.pdfgen import canvas
 
-from app.api.routes import router
 from app.config import settings
 from app.main import create_app
 from app.services import scope_bom
@@ -44,6 +45,13 @@ class ScopeBomTests(unittest.TestCase):
         self.assertEqual(pages[0]["source"], "user_override")
         self.assertEqual(pages[0]["page_role"], "title_page")
 
+    def test_unknown_colour_requests_clarification(self):
+        result = scope_bom.detect_colour_meanings(
+            [{"page": 1, "colours": ["other"]}],
+            {"found": False, "page": None},
+        )
+        self.assertEqual(result["unknown_colours"], ["other"])
+
     def test_page_signatures_pair_by_jaccard(self):
         pages = scope_bom.classify_pages([
             {"page": 1, "text": "", "tag_set": {"TK-1", "PI-1"}, "tags": [], "colours": []},
@@ -61,6 +69,18 @@ class ScopeBomTests(unittest.TestCase):
         )
         self.assertEqual(result["matched_tags"], ["PI-101"])
         self.assertEqual(result["unmatched_tags"], ["TK-9"])
+        self.assertEqual(result["status"], "needs_clarification")
+
+    def test_scope_cross_check_flags_conflicting_page_classifications(self):
+        result = scope_bom.cross_check_scope(
+            "Replace PI-101",
+            [{"tag": "PI-101", "pages": [1, 2]}],
+            [
+                {"page": 1, "work_class": "demo", "source": "user_override"},
+                {"page": 2, "work_class": "new", "source": "colour_legend"},
+            ],
+        )
+        self.assertEqual(result["ambiguous_tags"], ["PI-101"])
         self.assertEqual(result["status"], "needs_clarification")
 
     @patch("app.services.scope_bom.export_bom_to_pdf", return_value="/tmp/bom.pdf")
@@ -112,6 +132,47 @@ class ScopeBomTests(unittest.TestCase):
             scope_bom.build_scoped_bom(
                 "source.pdf", demo_pages=[1], job_id="job-3", source_file="source.pdf"
             )
+
+    def test_extract_page_signature_from_pdf(self):
+        with tempfile.TemporaryDirectory() as directory:
+            pdf_path = Path(directory) / "source.pdf"
+            document = canvas.Canvas(str(pdf_path))
+            document.setFillColor(red)
+            document.drawString(72, 720, "PI-101")
+            document.setFillColorRGB(0, 0, 0)
+            document.drawString(72, 690, "Instrument Legend")
+            document.save()
+            signatures = scope_bom.extract_content_signatures(str(pdf_path))
+        self.assertEqual(signatures[0]["page"], 1)
+        self.assertIn("PI-101", signatures[0]["tag_set"])
+        self.assertIn("red", signatures[0]["colours"])
+
+    def test_pdf_export_creates_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = scope_bom.export_bom_to_pdf(
+                job_id="job-test",
+                source_file="drawing.pdf",
+                materials=[{
+                    "item_number": 1,
+                    "tag_id": "PI-101",
+                    "description": "Pressure Indicator",
+                    "type": "pressure_indicator",
+                    "quantity": 1,
+                    "unit": "ea",
+                    "confidence": 0.8,
+                }],
+                output_dir=directory,
+            )
+            self.assertTrue(Path(output).is_file())
+
+    @patch("app.services.scope_bom.extract_content_signatures", return_value=[])
+    def test_no_tags_returns_clarification_without_export(self, _extract):
+        result = scope_bom.build_scoped_bom(
+            "source.pdf", job_id="job-empty", source_file="source.pdf"
+        )
+        self.assertTrue(result["needs_clarification"])
+        self.assertEqual(result["export_status"], "not_generated")
+        self.assertEqual(result["materials"], [])
 
 
 class ScanRouteTests(unittest.TestCase):
@@ -166,6 +227,7 @@ class ScanRouteTests(unittest.TestCase):
             data={"demo_pages": "[0]"},
         )
         self.assertEqual(response.status_code, 400)
+        self.assertIn("clarification_prompts", response.json())
 
     def test_scan_rejects_unsupported_upload(self):
         response = self.client.post(

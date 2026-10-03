@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from datetime import datetime
+from xml.sax.saxutils import escape
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
@@ -121,7 +122,7 @@ def export_bom_to_pdf(
     # Scope of Work
     if scope_of_work:
         elements.append(Paragraph("Scope of Work", heading_style))
-        elements.append(Paragraph(scope_of_work, normal_style))
+        elements.append(Paragraph(escape(scope_of_work), normal_style))
         elements.append(Spacer(1, 0.2*inch))
     
     # Materials Table
@@ -167,7 +168,7 @@ def export_bom_to_pdf(
     if review_notes:
         elements.append(Paragraph("⚠ Items Requiring Review/Clarification", warning_style))
         for i, note in enumerate(review_notes, 1):
-            elements.append(Paragraph(f"• {note}", normal_style))
+            elements.append(Paragraph(f"• {escape(note)}", normal_style))
         elements.append(Spacer(1, 0.2*inch))
     
     # Footer

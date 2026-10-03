@@ -25,7 +25,7 @@ ABBREVIATION_MAP = {
     "L": "Level",
     "M": "Momentary",
     "O": "Orifice or restriction",
-    "P": "Pressure or vacuum",
+    "P": "Pressure",
     "Q": "Quantity",
     "R": "Radiation",
     "S": "Speed or frequency",
@@ -69,10 +69,12 @@ def _normalize_colour(value: Any) -> str | None:
         normalized = value.strip().lower().lstrip("#")
         if normalized in {"red", "green", "blue"}:
             return normalized
+        if normalized in {"", "black", "white", "gray", "grey", "transparent", "none"}:
+            return None
         if re.fullmatch(r"[0-9a-f]{6}", normalized):
             value = tuple(int(normalized[i:i + 2], 16) / 255 for i in (0, 2, 4))
         else:
-            return None
+            return "other" if normalized else None
     if not isinstance(value, (tuple, list)) or not value:
         return None
     try:
@@ -87,11 +89,25 @@ def _normalize_colour(value: Any) -> str | None:
         return None
     if max(channels) > 1:
         channels = [channel / 255 for channel in channels]
-    red, green, blue = channels
     if max(channels) < 0.28 or max(channels) - min(channels) < 0.18:
         return None
-    dominant = max(range(3), key=channels.__getitem__)
-    return ("red", "green", "blue")[dominant]
+    primary_colours = {
+        "red": (1, 0, 0),
+        "green": (0, 1, 0),
+        "blue": (0, 0, 1),
+    }
+    closest = min(
+        primary_colours,
+        key=lambda colour: sum(
+            (channels[index] - primary_colours[colour][index]) ** 2
+            for index in range(3)
+        ),
+    )
+    distance = sum(
+        (channels[index] - primary_colours[closest][index]) ** 2
+        for index in range(3)
+    )
+    return closest if distance <= 0.5 else "other"
 
 
 def extract_content_signatures(pdf_path: str) -> list[dict[str, Any]]:
@@ -149,7 +165,7 @@ def decode_instrument_tag(
     tag: str, abbreviation_map: dict[str, str] | None = None
 ) -> dict[str, Any]:
     """Decode the first instrument letter and subsequent function letters."""
-    letter_map = abbreviation_map or ABBREVIATION_MAP
+    letter_map = abbreviation_map if abbreviation_map is not None else ABBREVIATION_MAP
     match = TAG_PATTERN.fullmatch(tag.strip().upper())
     prefix = match.group(1) if match else re.sub(r"[^A-Z]", "", tag.upper())
     if not prefix:
@@ -272,8 +288,8 @@ def cross_check_scope(
     classifications: list[dict[str, Any]],
 ) -> dict[str, Any]:
     """Match tag references in the stated scope against extracted drawing tags."""
-    del classifications
     extracted = {tag["tag"].upper(): tag["tag"] for tag in tags}
+    page_classifications = {page["page"]: page for page in classifications}
     mentioned = []
     for match in TAG_PATTERN.finditer(scope_of_work.upper()):
         normalized = f"{match.group(1)}-{match.group(2)}"
@@ -281,12 +297,31 @@ def cross_check_scope(
             mentioned.append(normalized)
     matches = [tag for tag in mentioned if tag in extracted]
     unmatched = [tag for tag in mentioned if tag not in extracted]
+    tag_evidence = {}
+    ambiguous = []
+    for tag in matches:
+        tag_info = next(item for item in tags if item["tag"].upper() == tag)
+        pages = tag_info.get("pages", [tag_info.get("page")])
+        evidence = [
+            {
+                "page": page,
+                "work_class": page_classifications[page]["work_class"],
+                "source": page_classifications[page]["source"],
+            }
+            for page in pages
+            if page in page_classifications
+        ]
+        tag_evidence[tag] = evidence
+        work_classes = {item["work_class"] for item in evidence if item["work_class"]}
+        if len(work_classes) > 1:
+            ambiguous.append(tag)
     return {
         "mentioned_tags": mentioned,
         "matched_tags": matches,
         "unmatched_tags": unmatched,
-        "ambiguous_tags": [],
-        "status": "needs_clarification" if unmatched else "matched",
+        "ambiguous_tags": ambiguous,
+        "tag_evidence": tag_evidence,
+        "status": "needs_clarification" if unmatched or ambiguous else "matched",
     }
 
 
@@ -304,6 +339,12 @@ def build_scoped_bom(
     """Build a scoped BOM and return evidence, clarification, and export status."""
     signatures = extract_content_signatures(pdf_path)
     page_count = len(signatures)
+    conflicting_pages = sorted(set(demo_pages or []) & set(new_work_pages or []))
+    if conflicting_pages:
+        raise ValueError(
+            "Pages cannot be designated as both demo and new work: "
+            + ", ".join(map(str, conflicting_pages))
+        )
     invalid_pages = sorted(
         page for page in (demo_pages or []) + (new_work_pages or [])
         if page < 1 or page > page_count
@@ -325,15 +366,20 @@ def build_scoped_bom(
     tags_by_name: dict[str, dict[str, Any]] = {}
     for signature in signatures:
         for tag in signature["tags"]:
-            enriched = dict(tag)
-            enriched["page"] = signature["page"]
-            tags_by_name.setdefault(tag["tag"], enriched)
+            enriched = tags_by_name.setdefault(
+                tag["tag"],
+                {**tag, "page": signature["page"], "pages": []},
+            )
+            if signature["page"] not in enriched["pages"]:
+                enriched["pages"].append(signature["page"])
     tags = list(tags_by_name.values())
     materials = generate_bom_from_tags(tags)
     classification_by_page = {page["page"]: page for page in pages}
     for material, tag in zip(materials, tags):
         decoded = decode_instrument_tag(tag["tag"])
-        if tag.get("type", "").endswith(("indicator", "sensor", "element", "switch")):
+        if tag.get("type", "") not in {
+            "level_switch_low", "level_switch_high", "level_switch_high_high"
+        } and tag.get("type", "").endswith(("indicator", "sensor", "element", "switch")):
             material["description"] = decoded["description"]
             material["description_confidence"] = decoded["confidence"]
             material["description_source"] = decoded["source"]
@@ -358,6 +404,12 @@ def build_scoped_bom(
         prompts.append(
             "Confirm scope tags not found in the P&ID: "
             + ", ".join(scope_check["unmatched_tags"])
+            + "."
+        )
+    if scope_check["ambiguous_tags"]:
+        prompts.append(
+            "Clarify tags assigned to conflicting work classes: "
+            + ", ".join(scope_check["ambiguous_tags"])
             + "."
         )
     if not tags:

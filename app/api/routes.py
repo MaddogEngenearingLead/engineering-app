@@ -4,6 +4,7 @@ import json
 import uuid
 from pathlib import Path
 from fastapi import APIRouter, File, UploadFile, HTTPException, Form
+from fastapi.responses import JSONResponse
 
 from app.config import settings
 from app.services.scope_bom import build_scoped_bom
@@ -56,7 +57,41 @@ def _parse_highlight_mapping(value: str) -> dict[str, str]:
         isinstance(key, str) and isinstance(item, str) for key, item in parsed.items()
     ):
         raise HTTPException(status_code=400, detail="highlight_mapping must map string keys to string values.")
+    if any(item.lower() not in {"demo", "new", "future"} for item in parsed.values()):
+        raise HTTPException(
+            status_code=400,
+            detail="highlight_mapping values must be demo, new, or future.",
+        )
     return parsed
+
+
+def _scan_failure(message: str, status_code: int) -> JSONResponse:
+    return JSONResponse(
+        status_code=status_code,
+        content={
+            "job_id": None,
+            "status": "failed",
+            "message": message,
+            "source_file": None,
+            "file_id": None,
+            "detected_assets": [],
+            "materials": [],
+            "total_items": 0,
+            "extraction_method": "text_extraction",
+            "extracted_text_length": 0,
+            "scope_of_work": "",
+            "review_notes": [],
+            "page_classifications": [],
+            "scope_check": None,
+            "legend": None,
+            "colour_analysis": None,
+            "needs_clarification": False,
+            "clarification_prompts": [],
+            "bom_pdf": None,
+            "export_status": "not_generated",
+            "export_error": None,
+        },
+    )
 
 
 @router.get("/health")
@@ -138,13 +173,19 @@ async def scan_pid(
     highlight_mapping: str = Form(default=""),
 ) -> dict[str, object]:
     """Scan a P&ID and build a scoped BOM, including clarification and export status."""
-    parsed_demo_pages = _parse_page_numbers(demo_pages, "demo_pages")
-    parsed_new_pages = _parse_page_numbers(new_work_pages, "new_work_pages")
-    parsed_highlight_mapping = _parse_highlight_mapping(highlight_mapping)
+    try:
+        parsed_demo_pages = _parse_page_numbers(demo_pages, "demo_pages")
+        parsed_new_pages = _parse_page_numbers(new_work_pages, "new_work_pages")
+        parsed_highlight_mapping = _parse_highlight_mapping(highlight_mapping)
+    except HTTPException as error:
+        return _scan_failure(str(error.detail), error.status_code)
     notes_list = [note.strip() for note in review_notes.split(",") if note.strip()]
 
     # First upload the file
-    upload_result = await upload_pid(file)
+    try:
+        upload_result = await upload_pid(file)
+    except HTTPException as error:
+        return _scan_failure(str(error.detail), error.status_code)
     file_id = upload_result["file_id"]
     file_path = upload_result["saved_path"]
     source_file = upload_result["original_filename"]
@@ -161,24 +202,8 @@ async def scan_pid(
             job_id=job_id,
             source_file=source_file,
         )
-    except Exception as error:
-        raise HTTPException(
-            status_code=422,
-            detail={
-                "job_id": job_id,
-                "status": "failed",
-                "message": "P&ID scan could not be completed.",
-                "source_file": source_file,
-                "file_id": file_id,
-                "materials": [],
-                "total_items": 0,
-                "needs_clarification": False,
-                "clarification_prompts": [],
-                "bom_pdf": None,
-                "export_status": "not_generated",
-                "error": str(error),
-            },
-        ) from error
+    except Exception:
+        return _scan_failure("P&ID scan could not be completed.", 422)
     needs_clarification = result["needs_clarification"]
     status = "failed" if result["export_status"] == "failed" else (
         "needs_clarification" if needs_clarification else "completed"
@@ -187,6 +212,8 @@ async def scan_pid(
         "job_id": job_id,
         "status": status,
         "message": (
+            "P&ID scan completed, but the BOM PDF export failed."
+            if result["export_status"] == "failed" else
             "P&ID scan completed; review the clarification prompts."
             if needs_clarification else
             "P&ID scan completed successfully."
@@ -208,7 +235,7 @@ async def scan_pid(
         "clarification_prompts": result["clarification_prompts"],
         "bom_pdf": result["bom_pdf"],
         "export_status": result["export_status"],
-        "export_error": result["export_error"],
+        "export_error": "BOM PDF export failed." if result["export_error"] else None,
     }
 
 
