@@ -1,36 +1,16 @@
-# Python bytecode
-__pycache__/
-*.py[cod]
-
-# Virtual environments
-.venv/
-venv/
-ENV/
-
-# Environment variables
 .env
-.env.*
-
-# Secrets and local config
-config.local.yaml
-
-# Editor/IDE files
-.vscode/
-.idea/
-
-# OS files
+.venv
+__pycache__
+*.pyc
+*.pyo
+*.pyd
 .DS_Store
-Thumbs.db
-
-# Distribution / packaging
-build/
-dist/
-*.egg-info/
-
-# Test coverage
-.coverage
-htmlcov/
+.idea
+.vscode
+backend/uploads/
+node_modules/
 .pytest_cache/
-
-# JSON logs
-*.log
+.coverage
+dist/
+build/
+*.egg-info/
