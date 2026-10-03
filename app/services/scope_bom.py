@@ -226,6 +226,13 @@ def _jaccard(left: set[str], right: set[str]) -> float:
     return len(left & right) / len(union) if union else 0.0
 
 
+def _normalize_tag(value: str) -> str:
+    match = TAG_PATTERN.fullmatch(value.strip())
+    if not match:
+        return re.sub(r"[ \t-]+", "", value).upper()
+    return f"{match.group(1).upper()}-{match.group(2)}"
+
+
 def classify_pages(
     signatures: list[dict[str, Any]],
     *,
@@ -311,11 +318,11 @@ def cross_check_scope(
     classifications: list[dict[str, Any]],
 ) -> dict[str, Any]:
     """Match tag references in the stated scope against extracted drawing tags."""
-    extracted = {tag["tag"].upper(): tag["tag"] for tag in tags}
+    extracted = {_normalize_tag(tag["tag"]): tag["tag"] for tag in tags}
     page_classifications = {page["page"]: page for page in classifications}
     mentioned = []
     for match in TAG_PATTERN.finditer(scope_of_work.upper()):
-        normalized = f"{match.group(1)}-{match.group(2)}"
+        normalized = _normalize_tag(match.group())
         if normalized not in mentioned:
             mentioned.append(normalized)
     matches = [tag for tag in mentioned if tag in extracted]
@@ -323,7 +330,7 @@ def cross_check_scope(
     tag_evidence = {}
     ambiguous = []
     for tag in matches:
-        tag_info = next(item for item in tags if item["tag"].upper() == tag)
+        tag_info = next(item for item in tags if _normalize_tag(item["tag"]) == tag)
         pages = tag_info.get("pages") or (
             [tag_info["page"]] if tag_info.get("page") is not None else []
         )
@@ -487,9 +494,9 @@ def build_scoped_bom(
                 scope_of_work=scope_of_work,
                 review_notes=prompts,
             )
-        except Exception as error:
+        except Exception:
             logger.exception("BOM PDF export failed.")
-            export_error = str(error)
+            export_error = "BOM PDF export failed."
     return {
         "detected_assets": tags,
         "materials": materials,

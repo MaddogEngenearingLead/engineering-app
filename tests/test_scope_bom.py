@@ -63,7 +63,7 @@ class ScopeBomTests(unittest.TestCase):
 
     def test_scope_cross_check(self):
         result = scope_bom.cross_check_scope(
-            "Replace PI-101 and inspect TK-9",
+            "Replace PI101 and inspect TK - 9",
             [{"tag": "PI-101"}],
             [],
         )
@@ -125,7 +125,7 @@ class ScopeBomTests(unittest.TestCase):
         self.assertTrue(result["needs_clarification"])
         self.assertTrue(any("legend" in prompt.lower() for prompt in result["clarification_prompts"]))
         self.assertEqual(result["export_status"], "failed")
-        self.assertEqual(result["export_error"], "disk full")
+        self.assertEqual(result["export_error"], "BOM PDF export failed.")
 
     @patch("app.services.scope_bom.extract_content_signatures", return_value=[])
     def test_page_override_outside_document_range_is_rejected(self, _extract):
