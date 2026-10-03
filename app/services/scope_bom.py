@@ -5,7 +5,11 @@ import logging
 from typing import Any
 
 from app.services.bom_export import export_bom_to_pdf
-from app.services.pid_extraction import extract_tags_from_text, generate_bom_from_tags
+from app.services.pid_extraction import (
+    VALID_PREFIXES,
+    extract_tags_from_text,
+    generate_bom_from_tags,
+)
 
 try:
     import pdfplumber
@@ -63,6 +67,13 @@ LEGEND_KEYWORDS = {
     "instrumentation": 1,
 }
 TAG_PATTERN = re.compile(r"\b([A-Z]{1,6})[ \t]{0,8}-?[ \t]{0,8}(\d{1,4})\b", re.IGNORECASE)
+SCOPE_PREFIX_PATTERN = "|".join(
+    re.escape(prefix) for prefix in sorted(VALID_PREFIXES, key=len, reverse=True)
+)
+SCOPE_TAG_PATTERN = re.compile(
+    rf"\b({SCOPE_PREFIX_PATTERN})[ \t]{{0,8}}-?[ \t]{{0,8}}(\d{{1,4}})\b",
+    re.IGNORECASE,
+)
 DECODED_INSTRUMENT_TYPES = {
     "pressure_sensor",
     "pressure_indicator",
@@ -75,6 +86,10 @@ DECODED_INSTRUMENT_TYPES = {
     "measurement_element",
 }
 logger = logging.getLogger(__name__)
+
+
+class ScopeOverrideError(ValueError):
+    pass
 
 
 def _normalize_colour(value: Any) -> str | None:
@@ -321,7 +336,7 @@ def cross_check_scope(
     extracted = {_normalize_tag(tag["tag"]): tag["tag"] for tag in tags}
     page_classifications = {page["page"]: page for page in classifications}
     mentioned = []
-    for match in TAG_PATTERN.finditer(scope_of_work.upper()):
+    for match in SCOPE_TAG_PATTERN.finditer(scope_of_work.upper()):
         normalized = _normalize_tag(match.group())
         if normalized not in mentioned:
             mentioned.append(normalized)
@@ -373,7 +388,7 @@ def build_scoped_bom(
     page_count = len(signatures)
     conflicting_pages = sorted(set(demo_pages or []) & set(new_work_pages or []))
     if conflicting_pages:
-        raise ValueError(
+        raise ScopeOverrideError(
             "Pages cannot be designated as both demo and new work: "
             + ", ".join(map(str, conflicting_pages))
         )
@@ -382,7 +397,7 @@ def build_scoped_bom(
         if page < 1 or page > page_count
     )
     if invalid_pages:
-        raise ValueError(
+        raise ScopeOverrideError(
             f"Page overrides are outside the document range (1-{page_count}): "
             + ", ".join(map(str, invalid_pages))
         )

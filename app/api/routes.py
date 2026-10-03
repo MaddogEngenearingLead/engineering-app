@@ -8,7 +8,7 @@ from fastapi import APIRouter, File, UploadFile, HTTPException, Form
 from fastapi.responses import JSONResponse
 
 from app.config import settings
-from app.services.scope_bom import build_scoped_bom
+from app.services.scope_bom import ScopeOverrideError, build_scoped_bom
 
 router = APIRouter(tags=["engineering"])
 logger = logging.getLogger(__name__)
@@ -181,7 +181,7 @@ async def scan_pid(
         parsed_new_pages = _parse_page_numbers(new_work_pages, "new_work_pages")
         parsed_highlight_mapping = _parse_highlight_mapping(highlight_mapping)
     except HTTPException as error:
-        return _scan_failure("Invalid scan parameters.", error.status_code)
+        return _scan_failure(str(error.detail), error.status_code)
     notes_list = [note.strip() for note in review_notes.split(",") if note.strip()]
 
     # First upload the file
@@ -205,6 +205,8 @@ async def scan_pid(
             job_id=job_id,
             source_file=source_file,
         )
+    except ScopeOverrideError as error:
+        return _scan_failure(str(error), 400)
     except ValueError:
         return _scan_failure("Invalid P&ID document or page override values.", 400)
     except Exception:

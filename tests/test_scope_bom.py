@@ -71,6 +71,16 @@ class ScopeBomTests(unittest.TestCase):
         self.assertEqual(result["unmatched_tags"], ["TK-9"])
         self.assertEqual(result["status"], "needs_clarification")
 
+    def test_scope_cross_check_ignores_non_tag_references(self):
+        result = scope_bom.cross_check_scope(
+            "See Rev 2 and Phase 3",
+            [{"tag": "PI-101"}],
+            [],
+        )
+        self.assertEqual(result["mentioned_tags"], [])
+        self.assertEqual(result["unmatched_tags"], [])
+        self.assertEqual(result["status"], "matched")
+
     def test_scope_cross_check_flags_conflicting_page_classifications(self):
         result = scope_bom.cross_check_scope(
             "Replace PI-101",
@@ -272,7 +282,9 @@ class ScanRouteTests(unittest.TestCase):
     def test_scan_reports_out_of_range_overrides_as_client_error(self):
         with patch(
             "app.api.routes.build_scoped_bom",
-            side_effect=ValueError("Page overrides are outside the document range."),
+            side_effect=scope_bom.ScopeOverrideError(
+                "Page overrides are outside the document range."
+            ),
         ):
             response = self.client.post(
                 "/api/scan",
@@ -280,7 +292,7 @@ class ScanRouteTests(unittest.TestCase):
                 data={"demo_pages": "2"},
             )
         self.assertEqual(response.status_code, 400)
-        self.assertIn("Invalid P&ID", response.json()["message"])
+        self.assertIn("outside the document range", response.json()["message"])
 
     def test_scan_hides_internal_processing_errors(self):
         with self.assertLogs("app.api.routes", level="ERROR"):
