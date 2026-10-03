@@ -7,6 +7,12 @@ from fastapi import APIRouter, File, UploadFile, HTTPException, Form
 from app.config import settings
 from app.services.pid_extraction import extract_text_from_pdf, extract_tags_from_text, generate_bom_from_tags
 from app.services.bom_export import export_bom_to_pdf
+from app.services.scope_bom import (
+    build_scoped_bom,
+    extract_job_number,
+    find_scope_document,
+    read_scope_text,
+)
 
 router = APIRouter(tags=["engineering"])
 
@@ -111,6 +117,47 @@ async def scan_pid(
     file_path = upload_result["saved_path"]
     source_file = upload_result["original_filename"]
     job_id = f"job-{file_id}"
+
+    # Auto-detect scope document and job number
+    scope_doc = find_scope_document(Path(settings.upload_dir) / "scope")
+    job_number = extract_job_number(scope_doc.name) if scope_doc else None
+    if scope_doc and not scope_of_work:
+        scope_of_work = read_scope_text(scope_doc)[:3000]
+
+    # Scope-aware BOM: legend descriptions + green-highlighted items on pages 4-5
+    scoped = build_scoped_bom(file_path) if file_path.lower().endswith(".pdf") else None
+    if scoped and scoped["scope_pages_found"]:
+        materials = scoped["materials"]
+        notes_list = [note.strip() for note in review_notes.split(",") if note.strip()]
+        bom_pdf_path = None
+        try:
+            bom_pdf_path = export_bom_to_pdf(
+                job_id=job_number or job_id,
+                source_file=source_file,
+                materials=materials,
+                scope_of_work=scope_of_work,
+                review_notes=notes_list,
+                flags=scoped["flags"],
+            )
+        except Exception as e:
+            print(f"Warning: BOM PDF export failed: {e}")
+        return {
+            "job_id": job_id,
+            "job_number": job_number,
+            "scope_document": scope_doc.name if scope_doc else None,
+            "status": "completed",
+            "message": "Scope-filtered BOM generated from green-highlighted items on pages 4-5.",
+            "source_file": source_file,
+            "file_id": file_id,
+            "materials": materials,
+            "total_items": len(materials),
+            "legend": scoped["legend"],
+            "flags": scoped["flags"],
+            "extraction_method": "scope_highlight_filter",
+            "scope_of_work": scope_of_work,
+            "review_notes": notes_list,
+            "bom_pdf": bom_pdf_path,
+        }
 
     # Extract text from PDF
     extracted_text = extract_text_from_pdf(file_path)

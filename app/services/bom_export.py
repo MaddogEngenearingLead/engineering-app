@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from datetime import datetime
 from reportlab.lib.pagesizes import letter
@@ -8,6 +9,7 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak
 from reportlab.lib import colors
+from xml.sax.saxutils import escape
 from reportlab.lib.enums import TA_CENTER, TA_LEFT
 
 
@@ -18,6 +20,7 @@ def export_bom_to_pdf(
     scope_of_work: str = "",
     review_notes: list[str] = None,
     output_dir: str = "bom_exports",
+    flags: dict | None = None,
 ) -> str:
     """
     Export BOM to professional PDF file with job ID and timestamp in filename.
@@ -30,6 +33,7 @@ def export_bom_to_pdf(
         scope_of_work: Description of the scope of work
         review_notes: List of items/notes that need review or clarification
         output_dir: Directory to save the export file
+        flags: Optional scope-review flags (untagged_green, freetext_untagged, mixed_colors)
     
     Returns:
         Path to the generated PDF file
@@ -41,7 +45,8 @@ def export_bom_to_pdf(
     output_path.mkdir(parents=True, exist_ok=True)
     
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = f"BOM_{job_id}_{timestamp}.pdf"
+    safe_job_id = re.sub(r"[^A-Za-z0-9._#-]", "_", job_id)
+    filename = f"BOM_{safe_job_id}_{timestamp}.pdf"
     file_path = output_path / filename
     
     # Create PDF document
@@ -170,6 +175,31 @@ def export_bom_to_pdf(
             elements.append(Paragraph(f"• {note}", normal_style))
         elements.append(Spacer(1, 0.2*inch))
     
+    # Scope review flags
+    flags = flags or {}
+    untagged = flags.get("untagged_green", [])
+    freetext = flags.get("freetext_untagged", [])
+    mixed = flags.get("mixed_colors", [])
+    if untagged or freetext or mixed:
+        elements.append(Paragraph("⚠ Scope Review Flags", warning_style))
+        if untagged:
+            elements.append(Paragraph("Untagged green symbols (manual review):", normal_style))
+            for item in untagged:
+                elements.append(Paragraph(
+                    escape(f"• Page {item['page']} at ({item['x']}, {item['y']}) - nearby text: "
+                           f"{item.get('nearby_text') or 'none'}"), normal_style))
+        if freetext:
+            elements.append(Paragraph("Items in notes but not tagged:", normal_style))
+            for item in freetext:
+                elements.append(Paragraph(escape(f"• Page {item['page']}: {item['note']}"), normal_style))
+        if mixed:
+            elements.append(Paragraph("Mixed-colour marks:", normal_style))
+            for item in mixed:
+                elements.append(Paragraph(
+                    escape(f"• Page {item['page']} at ({item['x']}, {item['y']}) - {item['color']}; "
+                           f"nearby text: {item.get('nearby_text') or 'none'}"), normal_style))
+        elements.append(Spacer(1, 0.2*inch))
+
     # Footer
     elements.append(Spacer(1, 0.1*inch))
     footer_text = "This Bill of Materials was automatically generated from P&ID scan data. " \
