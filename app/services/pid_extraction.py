@@ -30,111 +30,147 @@ def extract_text_from_pdf(file_path: str) -> str:
 
 def extract_tags_from_text(text: str) -> list[dict[str, object]]:
     """
-    Extract equipment tags from text using regex patterns.
-    Looks for common P&ID tag patterns like P-101, V-201, E-301, etc.
+    Extract equipment tags from text using improved regex patterns.
+    Handles multi-letter prefixes like TK-1, JFSP-1, MOV-001, etc.
     """
     tags = []
     seen = set()
 
-    # Common P&ID tag patterns
+    # Equipment tag patterns - ordered by specificity
+    # These match real P&ID tag formats from your drawing
     patterns = [
-        # Equipment prefix patterns: P (pump), V (valve), E (vessel), C (compressor), etc.
-        (r"\b([A-Z])-?(\d{2,4})\b", "generic"),
-        # Explicit patterns for common equipment
-        (r"\bPUMP[\s-]*([A-Z]\d{2,4}|\d{3,4})\b", "pump"),
-        (r"\bVALVE[\s-]*([A-Z]\d{2,4}|\d{3,4})\b", "valve"),
-        (r"\bVESSEL[\s-]*([A-Z]\d{2,4}|\d{3,4})\b", "vessel"),
-        (r"\bCOMPRESSOR[\s-]*([A-Z]\d{2,4}|\d{3,4})\b", "compressor"),
-        (r"\bFLOWMETER[\s-]*([A-Z]\d{2,4}|\d{3,4})\b", "flowmeter"),
-        (r"\bPRESSURE[\s-]*([A-Z]\d{2,4}|\d{3,4})\b", "sensor"),
-        (r"\bTEMPERATURE[\s-]*([A-Z]\d{2,4}|\d{3,4})\b", "sensor"),
+        # Multi-letter equipment tags: TK-1, JFSP-1, JFLP-1, MOV-001, etc.
+        # 2-5 letter prefix followed by optional dash and 1-4 digits
+        (r"\b([A-Z]{2,5})\s*[-]?\s*(\d{1,4})\b", "equipment"),
+        # Motor-operated valves: MOV-001, MOV F 002 (handles space-separated)
+        # MOV can be followed by optional 'F' and numbers with or without dash
+        (r"\bMOV\s*[F]?\s*[-]?(\d{3,4})\b", "valve"),
     ]
 
-    for pattern, equipment_type in patterns:
+    # Exclude patterns - skip these even if they match (sheet/drawing references)
+    exclude_patterns = [
+        r"^M-\d{3}$",      # M-601, M-602 (drawing references)
+        r"^MD\d{3}$",      # MD601, MD602 (drawing identifiers)
+        r"^DRG$",          # Drawing abbreviation
+    ]
+
+    for pattern, tag_type in patterns:
         matches = re.finditer(pattern, text, re.IGNORECASE)
         for match in matches:
-            tag = match.group(0).upper().replace(" ", "-").replace("_", "-")
-            if tag not in seen:
-                seen.add(tag)
+            # Reconstruct full tag from the groups
+            if tag_type == "valve" and "MOV" in match.group(0):
+                # For MOV valves, use MOV + number
+                full_tag = f"MOV-{match.group(1)}"
+            else:
+                # For other equipment, combine prefix + number with dash
+                prefix = match.group(1).upper()
+                number = match.group(2)
+                full_tag = f"{prefix}-{number}"
+            
+            # Skip excluded patterns
+            if any(re.match(excl, full_tag) for excl in exclude_patterns):
+                continue
+
+            if full_tag not in seen:
+                seen.add(full_tag)
+                
+                # Infer equipment type from prefix
+                prefix = full_tag.split("-")[0]
+                equipment_type = infer_equipment_type(prefix)
+                
                 tags.append({
-                    "tag": tag,
+                    "tag": full_tag,
                     "type": equipment_type,
-                    "confidence": 0.75,
+                    "confidence": 0.85,
                     "source": "regex_extraction",
+                    "prefix": prefix,
                 })
 
     return tags
 
 
-def infer_equipment_type(tag: str) -> str:
+def infer_equipment_type(prefix: str) -> str:
     """
     Infer equipment type from tag prefix.
-    Common P&ID conventions:
-    - P: Pump
-    - V: Valve
-    - E: Vessel/Equipment
-    - C: Compressor
-    - F: Flowmeter
-    - T: Temperature sensor
-    - PS: Pressure sensor
+    Maps real P&ID prefixes to equipment types.
     """
-    prefix = tag.split("-")[0].upper()
+    prefix = prefix.upper()
 
     type_map = {
+        # Your drawing's equipment
+        "TK": "tank",
+        "JFSP": "pump",
+        "JFLP": "pump",
+        "MOV": "valve",
+        
+        # Common instruments
+        "PS": "pressure_sensor",
+        "PI": "pressure_indicator",
+        "TI": "temperature_indicator",
+        "FI": "flow_indicator",
+        "LI": "level_indicator",
+        
+        # Vents and drains
+        "PV": "pressure_vent",
+        "EV": "emergency_vent",
+        "LPD": "low_point_drain",
+        "HPV": "high_point_vent",
+        
+        # Other equipment
+        "FS": "filter_separator",
+        "F": "filter",
+        "S": "strainer",
+        "C": "compressor",
         "P": "pump",
         "V": "valve",
         "E": "vessel",
-        "C": "compressor",
-        "F": "flowmeter",
-        "T": "temperature_sensor",
-        "PS": "pressure_sensor",
-        "FL": "level_indicator",
-        "PI": "pressure_indicator",
-        "TI": "temperature_indicator",
     }
 
-    return type_map.get(prefix, "unknown_equipment")
+    return type_map.get(prefix, "equipment")
 
 
 def generate_bom_from_tags(tags: list[dict[str, object]]) -> list[dict[str, object]]:
     """
-    Generate a basic BOM (Bill of Materials) from extracted tags.
-    Assigns default costs and quantities based on equipment type.
+    Generate a BOM (Bill of Materials) from extracted tags.
+    No pricing - focus on equipment identification and scope.
     """
     bom = []
     item_number = 1
 
-    # Default unit costs by equipment type
-    cost_map = {
-        "pump": 2500.0,
-        "valve": 350.0,
-        "vessel": 5000.0,
-        "compressor": 8000.0,
-        "flowmeter": 1200.0,
-        "temperature_sensor": 250.0,
-        "pressure_sensor": 300.0,
-        "level_indicator": 400.0,
-        "pressure_indicator": 200.0,
-        "temperature_indicator": 200.0,
-        "unknown_equipment": 500.0,
+    # Description map for equipment types
+    description_map = {
+        "tank": "Storage Tank",
+        "pump": "Centrifugal Pump",
+        "valve": "Motor-Operated Valve",
+        "pressure_sensor": "Pressure Sensor",
+        "pressure_indicator": "Pressure Indicator",
+        "temperature_indicator": "Temperature Indicator",
+        "flow_indicator": "Flow Indicator",
+        "level_indicator": "Level Indicator",
+        "pressure_vent": "Pressure Vent",
+        "emergency_vent": "Emergency Vent",
+        "low_point_drain": "Low Point Drain",
+        "high_point_vent": "High Point Vent",
+        "filter_separator": "Filter/Separator",
+        "filter": "Filter",
+        "strainer": "Strainer",
+        "equipment": "Equipment",
     }
 
     for tag_info in tags:
         tag = tag_info["tag"]
-        equipment_type = tag_info.get("type", infer_equipment_type(tag))
-        unit_cost = cost_map.get(equipment_type, 500.0)
-        quantity = 1  # Default quantity; could be enhanced with regex
+        equipment_type = tag_info.get("type", "equipment")
+        description = description_map.get(equipment_type, "Equipment")
+        quantity = 1  # Default quantity
 
         bom.append({
             "item_number": item_number,
             "tag_id": tag,
-            "description": f"{equipment_type.replace('_', ' ').title()}",
+            "description": description,
             "type": equipment_type,
             "quantity": quantity,
             "unit": "ea",
-            "supplier": "Extracted from P&ID",
-            "unit_cost": unit_cost,
-            "total_cost": unit_cost * quantity,
+            "confidence": tag_info.get("confidence", 0.85),
         })
         item_number += 1
 
