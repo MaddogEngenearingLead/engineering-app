@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import json
+import re
 import uuid
 from pathlib import Path
 from fastapi import APIRouter, File, UploadFile, HTTPException, Form
 
 from app.config import settings
-from app.services.pid_extraction import extract_text_from_pdf, extract_tags_from_text, generate_bom_from_tags
-from app.services.bom_export import export_bom_to_pdf
+from app.services.scope_bom import build_scoped_bom
 
 router = APIRouter(tags=["engineering"])
 
@@ -90,84 +91,72 @@ async def upload_pid(file: UploadFile = File(...)) -> dict[str, object]:
     }
 
 
+def _parse_pages(value: str, name: str) -> list[int] | None:
+    """Parse '2,3' (or JSON list) into a list of page numbers."""
+    if not value or not value.strip():
+        return None
+    try:
+        return [int(p) for p in re.split(r"[,\s]+", value.strip().strip("[]")) if p]
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"{name} must be a comma-separated list of page numbers.")
+
+
 @router.post("/scan")
 async def scan_pid(
     file: UploadFile = File(...),
     scope_of_work: str = Form(default=""),
     review_notes: str = Form(default=""),
+    legend_page: int | None = Form(default=None),
+    key_page: int | None = Form(default=None),
+    demo_pages: str = Form(default=""),
+    new_work_pages: str = Form(default=""),
+    highlight_mapping: str = Form(default=""),
 ) -> dict[str, object]:
     """
-    Scan a P&ID file and extract equipment/BOM data using text extraction.
-    Generates a professional PDF report.
-    
-    Args:
-        file: P&ID file (PDF or image)
-        scope_of_work: Description of the scope of work for this project
-        review_notes: Comma-separated list of items or notes requiring review
+    Scan a P&ID and build a scope-aware BOM.
+
+    Returns {"status": "completed", ...} or {"status": "needs_clarification", "questions": [...]}.
+    Resubmit with demo_pages / new_work_pages / highlight_mapping (JSON) / legend_page / key_page
+    to override any auto-detection.
     """
-    # First upload the file
+    mapping = None
+    if highlight_mapping.strip():
+        try:
+            mapping = json.loads(highlight_mapping)
+            if not isinstance(mapping, dict):
+                raise ValueError
+        except ValueError:
+            raise HTTPException(status_code=400, detail="highlight_mapping must be a JSON object.")
+
     upload_result = await upload_pid(file)
     file_id = upload_result["file_id"]
-    file_path = upload_result["saved_path"]
-    source_file = upload_result["original_filename"]
     job_id = f"job-{file_id}"
-
-    # Extract text from PDF
-    extracted_text = extract_text_from_pdf(file_path)
-
-    # Extract tags from text
-    detected_assets = extract_tags_from_text(extracted_text)
-
-    # Parse review notes from comma-separated string
     notes_list = [note.strip() for note in review_notes.split(",") if note.strip()]
 
-    # If no tags were found, return a helpful message
-    if not detected_assets:
-        return {
-            "job_id": job_id,
-            "status": "completed",
-            "message": "P&ID scan completed. No equipment tags detected with current extraction methods.",
-            "source_file": source_file,
-            "file_id": file_id,
-            "detected_assets": [],
-            "materials": [],
-            "total_items": 0,
-            "extraction_method": "text_extraction",
-            "note": "Consider using image-based OCR or manual tag entry for better results.",
-            "bom_pdf": None,
-        }
-
-    # Generate BOM from extracted tags (no pricing)
-    materials = generate_bom_from_tags(detected_assets)
-
-    # Export BOM to PDF
-    bom_pdf_path = None
-    try:
-        bom_pdf_path = export_bom_to_pdf(
-            job_id=job_id,
-            source_file=source_file,
-            materials=materials,
-            scope_of_work=scope_of_work,
-            review_notes=notes_list,
-        )
-    except Exception as e:
-        print(f"Warning: BOM PDF export failed: {e}")
-
-    return {
+    result = build_scoped_bom(
+        upload_result["saved_path"],
+        scope_text=scope_of_work or None,
+        demo_pages=_parse_pages(demo_pages, "demo_pages"),
+        new_work_pages=_parse_pages(new_work_pages, "new_work_pages"),
+        highlight_mapping=mapping,
+        legend_page=legend_page,
+        key_page=key_page,
+        review_notes=notes_list,
+        job_id=job_id,
+        source_file=upload_result["original_filename"],
+    )
+    result.update({
         "job_id": job_id,
-        "status": "completed",
-        "message": "P&ID scan completed successfully. BOM PDF generated.",
-        "source_file": source_file,
         "file_id": file_id,
-        "detected_assets": detected_assets,
-        "materials": materials,
-        "total_items": len(materials),
-        "extraction_method": "text_extraction",
-        "extracted_text_length": len(extracted_text),
-        "scope_of_work": scope_of_work,
-        "review_notes": notes_list,
-        "bom_pdf": bom_pdf_path,
-    }
+        "source_file": upload_result["original_filename"],
+    })
+    if result["status"] == "completed":
+        result.update({
+            "total_items": len(result["materials"]),
+            "scope_of_work": scope_of_work,
+            "review_notes": notes_list,
+        })
+    return result
 
 
 @router.get("/materials")
