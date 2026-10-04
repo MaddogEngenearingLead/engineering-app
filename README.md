@@ -247,4 +247,4 @@ No license has been specified yet for this project.
 
 Run the Tkinter Job Manager with `python -m app.gui` (requires `tkinterdnd2`, listed in requirements.txt).
 
-To build a standalone executable (on the target OS): `pip install pyinstaller && python build_exe.py`; output is `dist/JobManager`. Alternatively run `python run_gui.py`.
+To build a standalone app, run `pip install tkinterdnd2 pyinstaller && python build_exe.py` on the target OS: Windows produces `dist/JobManager.exe`, macOS produces `dist/JobManager.app`. PyInstaller cannot cross-compile, so alternatively run the **Build GUI** GitHub Actions workflow (Actions tab -> Run workflow) and download the Windows and macOS artifacts. On Linux, install `python3-tk` first. You can also run from source with `python run_gui.py`.
