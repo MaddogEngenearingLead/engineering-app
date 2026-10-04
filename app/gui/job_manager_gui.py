@@ -76,12 +76,21 @@ class JobManagerApp(TkinterDnD.Tk):
         self.password_entry.bind("<Return>", lambda _e: self.process_login())
         tk.Button(self, text="Login", command=self.process_login, width=20,
                   bg="#4CAF50", fg="white").pack(pady=15)
+        tk.Button(self, text="Create Account", command=self.create_account,
+                  relief="flat", fg="blue").pack()
 
     def process_login(self):
+        # Backend authentication is still in development: only checks fields are filled.
         if self.username_entry.get().strip() and self.password_entry.get():
             self.show_dashboard()
         else:
             messagebox.showerror("Error", "Please enter both username and password")
+
+    def create_account(self):
+        # TODO(auth): connect Create Account to backend signup endpoint when available
+        messagebox.showinfo("Create Account",
+                            "Account creation is not available yet. It will be enabled "
+                            "when the login backend is complete.")
 
     # ------------------------------------------------------------------
     # Dashboard
