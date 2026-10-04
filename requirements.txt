@@ -24,6 +24,9 @@ httpx==0.27.2
 # Utility libraries
 python-multipart==0.0.9
 
+# Desktop GUI (python -m app.gui)
+tkinterdnd2==0.4.2
+
 # PDF extraction, BOM export and scope documents
 pdfplumber==0.11.4
 reportlab==4.2.5
