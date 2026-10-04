@@ -3,7 +3,7 @@ import Button from './common/Button.jsx';
 import Card from './common/Card.jsx';
 import useFormState, { parsePageList } from '../hooks/useFormState.js';
 
-const MEANINGS = ['', 'new_work', 'demo', 'future_work', 'ignore'];
+const MEANINGS = ['', 'new_work', 'demo'];
 
 export default function EditOverride({ result, onSubmit, onCancel }) {
   const colours = Object.keys(result?.colour_scheme?.colours_detected || {});
@@ -11,23 +11,15 @@ export default function EditOverride({ result, onSubmit, onCancel }) {
     legend: result?.legend_detected?.page ?? '',
     demo: (result?.page_classification?.demo_pages || []).join(', '),
     newWork: (result?.page_classification?.new_work_pages || []).join(', '),
-    meanings: Object.fromEntries(colours.map((c) => [c, result.colour_scheme.colours_detected[c].meaning || ''])),
-    custom: '',
+    meanings: Object.fromEntries(colours.map((c) => [c, ''])),
   });
 
-  const build = () => {
-    const mapping = Object.fromEntries(Object.entries(form.meanings).filter(([, v]) => v));
-    form.custom.split('\n').forEach((line) => {
-      const [k, v] = line.split('=').map((s) => s.trim());
-      if (k && v) mapping[k] = v;
-    });
-    return {
-      legend_page: form.legend ? parseInt(form.legend, 10) : undefined,
-      demo_pages: parsePageList(form.demo),
-      new_work_pages: parsePageList(form.newWork),
-      highlight_mapping: mapping,
-    };
-  };
+  const build = () => ({
+    legend_page: form.legend ? parseInt(form.legend, 10) : undefined,
+    demo_pages: parsePageList(form.demo),
+    new_work_pages: parsePageList(form.newWork),
+    highlight_mapping: Object.fromEntries(Object.entries(form.meanings).filter(([, v]) => v)),
+  });
   const preview = build();
 
   return (
@@ -43,7 +35,7 @@ export default function EditOverride({ result, onSubmit, onCancel }) {
           <input className="ml-2 rounded border border-slate-300 p-1" value={form.newWork} onChange={(e) => setField('newWork', e.target.value)} />
         </label>
         <fieldset>
-          <legend className="font-medium">Colour meanings</legend>
+          <legend className="font-medium">Colour meanings (override)</legend>
           {colours.map((c) => (
             <label key={c} className="mt-1 flex items-center gap-2">
               <code className="w-32">{c}</code>
@@ -54,9 +46,6 @@ export default function EditOverride({ result, onSubmit, onCancel }) {
             </label>
           ))}
         </fieldset>
-        <label className="block">Custom highlight mapping (one <code>colour=meaning</code> per line)
-          <textarea rows={3} className="mt-1 block w-full rounded border border-slate-300 p-2" value={form.custom} onChange={(e) => setField('custom', e.target.value)} />
-        </label>
         <div>
           <h3 className="font-medium">Preview</h3>
           <pre className="overflow-auto rounded bg-slate-100 p-2 text-xs">{JSON.stringify(preview, null, 2)}</pre>
