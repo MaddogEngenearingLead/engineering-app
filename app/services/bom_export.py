@@ -24,7 +24,7 @@ def export_bom_to_pdf(
     PDF includes scope of work, materials table, review notes, and designations.
     
     Args:
-        job_id: Job identifier (e.g., "job-9a1edce8")
+        job_id: Job identifier (e.g., "JOB-001")
         source_file: Original P&ID filename
         materials: List of material dictionaries from generate_bom_from_tags()
         scope_of_work: Description of the scope of work
@@ -185,4 +185,93 @@ def export_bom_to_pdf(
     # Build PDF
     doc.build(elements)
     
+    return str(file_path)
+
+
+def export_bom_to_json(
+    job_id: str,
+    source_file: str,
+    materials: list[dict],
+    scope_of_work: str = "",
+    review_notes: list[str] = None,
+    detected_assets: list[dict] = None,
+    output_dir: str = "bom_exports",
+) -> str:
+    """
+    Export BOM to JSON file for programmatic access and archival.
+
+    Args:
+        job_id: Job identifier (e.g., "JOB-001")
+        source_file: Original P&ID filename
+        materials: List of material dictionaries
+        scope_of_work: Description of the scope of work
+        review_notes: List of items/notes that need review
+        detected_assets: List of detected equipment tags
+        output_dir: Directory to save the export file
+
+    Returns:
+        Path to the generated JSON file
+    """
+    if review_notes is None:
+        review_notes = []
+    if detected_assets is None:
+        detected_assets = []
+
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"BOM_{job_id}_{timestamp}.json"
+    file_path = output_path / filename
+
+    bom_data = {
+        "job_id": job_id,
+        "source_file": source_file,
+        "generated_at": datetime.now().isoformat(),
+        "scope_of_work": scope_of_work,
+        "detected_assets": detected_assets,
+        "materials": materials,
+        "total_items": len(materials),
+        "review_notes": review_notes,
+    }
+
+    file_path.write_text(json.dumps(bom_data, indent=2))
+    return str(file_path)
+
+
+def export_bom_to_csv(
+    job_id: str,
+    materials: list[dict],
+    output_dir: str = "bom_exports",
+) -> str:
+    """
+    Export BOM materials to CSV file for spreadsheet import.
+
+    Args:
+        job_id: Job identifier (e.g., "JOB-001")
+        materials: List of material dictionaries
+        output_dir: Directory to save the export file
+
+    Returns:
+        Path to the generated CSV file
+    """
+    import csv
+
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"BOM_{job_id}_{timestamp}.csv"
+    file_path = output_path / filename
+
+    if not materials:
+        file_path.write_text("")
+        return str(file_path)
+
+    with open(file_path, "w", newline="") as f:
+        fieldnames = materials[0].keys()
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(materials)
+
     return str(file_path)
