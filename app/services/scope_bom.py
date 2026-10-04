@@ -6,7 +6,7 @@ Single pipeline (see ``build_scoped_bom``):
   3. extract tags from new-work pages
   4. detect colour meanings (only once page roles are known)
   5. cross-check against the scope text
-  6. build BOM, flags and BOM PDF
+  6. build BOM, flags and BOM PDF/JSON/CSV
   7. return ``completed`` or ``needs_clarification``
 """
 from __future__ import annotations
@@ -22,7 +22,7 @@ try:
 except ImportError:  # pragma: no cover
     HAS_PDFPLUMBER = False
 
-from app.services.bom_export import export_bom_to_pdf
+from app.services.bom_export import export_bom_to_pdf, export_bom_to_json, export_bom_to_csv
 from app.services.pid_extraction import (
     extract_tags_from_text,
     generate_bom_from_tags,
@@ -455,7 +455,10 @@ def build_scoped_bom(
     source_file: str | None = None,
     output_dir: str = "bom_exports",
 ) -> dict:
-    """Run the full scope-aware BOM pipeline. Page numbers are 1-based."""
+    """Run the full scope-aware BOM pipeline. Page numbers are 1-based.
+    
+    Generates BOM in three formats (PDF, JSON, CSV) in the output_dir.
+    """
     if not HAS_PDFPLUMBER:
         raise RuntimeError("pdfplumber is required")
     with pdfplumber.open(pdf_path) as pdf:
@@ -540,7 +543,12 @@ def build_scoped_bom(
         job_number = re.sub(r"\s+", "", job_match.group(0)) if job_match else None
 
     notes = list(review_notes or []) + [f["message"] for f in flags if f["severity"] in ("warning", "review")]
+    
+    # Export BOM in all three formats
     bom_pdf = None
+    bom_json = None
+    bom_csv = None
+    
     try:
         bom_pdf = export_bom_to_pdf(
             job_id=job_id or job_number or "job",
@@ -550,8 +558,30 @@ def build_scoped_bom(
             review_notes=notes,
             output_dir=output_dir,
         )
-    except Exception as exc:  # report but still return the BOM
+    except Exception as exc:
         flags.append({"type": "bom_pdf_failed", "severity": "warning", "message": f"BOM PDF export failed: {exc}"})
+
+    try:
+        bom_json = export_bom_to_json(
+            job_id=job_id or job_number or "job",
+            source_file=source_file or Path(pdf_path).name,
+            materials=materials,
+            scope_of_work=scope_text or "",
+            review_notes=notes,
+            detected_assets=tag_infos,
+            output_dir=output_dir,
+        )
+    except Exception as exc:
+        flags.append({"type": "bom_json_failed", "severity": "warning", "message": f"BOM JSON export failed: {exc}"})
+
+    try:
+        bom_csv = export_bom_to_csv(
+            job_id=job_id or job_number or "job",
+            materials=materials,
+            output_dir=output_dir,
+        )
+    except Exception as exc:
+        flags.append({"type": "bom_csv_failed", "severity": "warning", "message": f"BOM CSV export failed: {exc}"})
 
     return {
         "status": "completed",
@@ -566,4 +596,6 @@ def build_scoped_bom(
         "materials": materials,
         "flags": flags,
         "bom_pdf": bom_pdf,
+        "bom_json": bom_json,
+        "bom_csv": bom_csv,
     }
