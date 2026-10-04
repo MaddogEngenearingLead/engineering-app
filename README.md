@@ -246,3 +246,5 @@ No license has been specified yet for this project.
 ## Desktop GUI
 
 Run the Tkinter Job Manager with `python -m app.gui` (requires `tkinterdnd2`, listed in requirements.txt).
+
+To build a standalone executable (on the target OS): `pip install pyinstaller && python build_exe.py`; output is `dist/JobManager`. Alternatively run `python run_gui.py`.

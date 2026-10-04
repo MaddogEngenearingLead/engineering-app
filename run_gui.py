@@ -1,0 +1,5 @@
+"""Entry point for the Job Manager desktop GUI (also used for the PyInstaller build)."""
+from app.gui.job_manager_gui import main
+
+if __name__ == "__main__":
+    main()
