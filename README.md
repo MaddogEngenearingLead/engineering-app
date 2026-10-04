@@ -2,11 +2,11 @@
 
 A full-stack foundation for visualizing and managing process and instrumentation diagram (P&ID) and pipeline engineering data.
 
-The project currently combines a small FastAPI backend with a browser-based HTML/CSS/JavaScript dashboard. It is designed to grow into a document-processing platform for extracting engineering assets, connections, and bill-of-materials (BOM) data from P&ID documents.
+The project currently combines a small FastAPI backend with a browser-based HTML/CSS/JavaScript dashboard. It is designed to grow into a document-processing platform for extracting engineering assets, generating bills of materials, and managing engineering workflows.
 
 ## Current status
 
-The repository is an early-stage foundation. The backend currently provides health and pipeline-summary endpoints, while the frontend contains dashboard views and browser-local asset management. Persistent storage, document processing, and production authentication are planned rather than implemented in the current application.
+The repository is an early-stage foundation. The backend currently provides health and pipeline-summary endpoints, while the frontend contains dashboard views and browser-local asset management. Python dependencies have been validated and the backend is ready for API development.
 
 See [`IMPLEMENTATION_ROADMAP.md`](IMPLEMENTATION_ROADMAP.md) for the planned implementation phases.
 
@@ -64,13 +64,88 @@ See [`IMPLEMENTATION_ROADMAP.md`](IMPLEMENTATION_ROADMAP.md) for the planned imp
 - A modern web browser
 - Optional: Docker
 
+## Quick Start: Run Tests from a Fresh Window
+
+### Windows (Git Bash)
+
+```bash
+# Clone or navigate to the repository
+cd engineering-app
+
+# Create a virtual environment
+python -m venv .venv
+
+# Activate the virtual environment (use 'source' in Git Bash)
+source .venv/Scripts/activate
+
+# Upgrade pip
+python -m pip install --upgrade pip
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Run tests
+python -m pytest tests -q
+
+# View test results summary
+```
+
+### macOS / Linux (Bash)
+
+```bash
+# Clone or navigate to the repository
+cd engineering-app
+
+# Create a virtual environment
+python3 -m venv .venv
+
+# Activate the virtual environment
+source .venv/bin/activate
+
+# Upgrade pip
+python -m pip install --upgrade pip
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Run tests
+python -m pytest tests -q
+
+# View test results summary
+```
+
+### Windows (Command Prompt / PowerShell)
+
+```cmd
+# Clone or navigate to the repository
+cd engineering-app
+
+# Create a virtual environment
+python -m venv .venv
+
+# Activate the virtual environment
+.venv\Scripts\activate
+
+# Upgrade pip
+python -m pip install --upgrade pip
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Run tests
+python -m pytest tests -q
+
+# View test results summary
+```
+
 ## Run the backend locally
 
 Create and activate a virtual environment, then install the Python dependencies:
 
 ```bash
 python -m venv .venv
-source .venv/bin/activate       # Windows: .venv\Scripts\activate
+source .venv/bin/activate       # Windows Git Bash: source .venv/Scripts/activate
+                                 # Windows CMD: .venv\Scripts\activate
 python -m pip install --upgrade pip
 pip install -r requirements.txt
 ```
