@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import tempfile
 import uuid
 from pathlib import Path
 from typing import Optional
@@ -205,6 +206,63 @@ def _parse_pages(value: str, name: str) -> list[int] | None:
         raise HTTPException(status_code=400, detail=f"{name} must be comma-separated page numbers.")
 
 
+@router.post("/scan")
+async def scan_pid(
+    file: UploadFile = File(...),
+    scope_of_work: str = Form(default=""),
+    review_notes: str = Form(default=""),
+    legend_page: int | None = Form(default=None),
+    key_page: int | None = Form(default=None),
+    demo_pages: str = Form(default=""),
+    new_work_pages: str = Form(default=""),
+    highlight_mapping: str = Form(default=""),
+) -> dict[str, object]:
+    """Unified single-endpoint BOM scan for a PDF and scope text.
+
+    This is the canonical unified scan endpoint intended to replace the older
+    scope-bom pipeline paths.
+    """
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="A file is required.")
+
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+
+    mapping = None
+    if highlight_mapping.strip():
+        try:
+            mapping = json.loads(highlight_mapping)
+            if not isinstance(mapping, dict):
+                raise ValueError
+        except ValueError:
+            raise HTTPException(status_code=400, detail="highlight_mapping must be a JSON object.")
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        pdf_path = Path(tmpdir) / sanitize_filename(file.filename)
+        pdf_path.write_bytes(content)
+
+        notes_list = [note.strip() for note in review_notes.split(",") if note.strip()]
+        result = build_scoped_bom(
+            str(pdf_path),
+            scope_text=scope_of_work.strip(),
+            demo_pages=_parse_pages(demo_pages, "demo_pages"),
+            new_work_pages=_parse_pages(new_work_pages, "new_work_pages"),
+            highlight_mapping=mapping,
+            legend_page=legend_page,
+            key_page=key_page,
+            review_notes=notes_list,
+            job_id=f"JOB-{uuid.uuid4().hex[:8]}",
+            source_file=pdf_path.name,
+            output_dir=tmpdir,
+        )
+
+        if result.get("status") == "completed":
+            result["scope_of_work"] = scope_of_work.strip()[:200]
+            result["review_notes"] = notes_list
+        return result
+
+
 @router.post("/jobs/{job_number}/scan")
 async def scan_job_pid(
     job_number: str,
@@ -249,14 +307,12 @@ async def scan_job_pid(
         scope_path = scope_dir / scope_filename
         if not scope_path.exists():
             raise HTTPException(status_code=404, detail=f"Scope file not found: {scope_filename}")
-        # Extract text from scope file
         from app.file_detector import FileDetector
         detector = FileDetector()
         effective_scope = detector.extract_text_from_file(scope_path)
     elif scope_of_work:
         effective_scope = scope_of_work.strip()
     else:
-        # Try to auto-detect scope file
         scope_files = job_manager.get_scope_files(job_number)
         if scope_files:
             from app.file_detector import FileDetector
@@ -308,7 +364,7 @@ async def scan_job_pid(
         if result["status"] == "completed":
             result.update({
                 "total_items": len(result["materials"]),
-                "scope_of_work": effective_scope[:200],  # Include first 200 chars
+                "scope_of_work": effective_scope[:200],
                 "review_notes": notes_list,
             })
         return result
