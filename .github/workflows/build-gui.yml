@@ -1,0 +1,29 @@
+name: Build GUI
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install tkinterdnd2==0.4.2 pyinstaller
+      - run: python build_exe.py
+      - name: Zip macOS app
+        if: runner.os == 'macOS'
+        run: cd dist && zip -r JobManager-macos.zip JobManager.app
+      - uses: actions/upload-artifact@v4
+        with:
+          name: JobManager-${{ runner.os }}
+          path: |
+            dist/JobManager.exe
+            dist/JobManager-macos.zip
