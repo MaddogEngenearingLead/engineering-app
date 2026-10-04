@@ -1,19 +1,38 @@
 """Tkinter Job Manager: login, dashboard and new-job screens.
 
 Launch with: python -m app.gui
+
+"Create Job" creates <uploads>/<job number>/ with the P&ID in pid/ and the
+scope file in scope/. The application reads those files back from the paths
+recorded in the job's job_metadata.json.
 """
 from __future__ import annotations
 
+import os
+import sys
 import tkinter as tk
+from pathlib import Path
 from tkinter import messagebox
 
 from tkinterdnd2 import DND_FILES, TkinterDnD
 
-PLACEHOLDER_JOBS = [
-    "Job #1001 - Refinery Upgrade",
-    "Job #1002 - Pipeline Inspection",
-    "Job #1003 - Maintenance",
-]
+from app.job_manager import JobManager
+
+
+def get_upload_dir() -> str:
+    """Uploads folder used by the GUI.
+
+    Order: UPLOAD_DIR env var, then a per-user folder when running as a
+    packaged .exe (Program Files is not writable), else backend/uploads
+    (same default as the API).
+    """
+    env = os.environ.get("UPLOAD_DIR")
+    if env:
+        return env
+    if getattr(sys, "frozen", False):
+        base = os.environ.get("LOCALAPPDATA") or str(Path.home())
+        return str(Path(base) / "EngineeringApp" / "uploads")
+    return "backend/uploads"
 
 
 def parse_dropped_files(tk_root, data: str) -> list[str]:
@@ -27,6 +46,7 @@ class JobManagerApp(TkinterDnD.Tk):
         self.title("Job Manager App")
         self.geometry("500x400")
         self.configure(padx=20, pady=20)
+        self.jobs = JobManager(get_upload_dir())
         self.show_login_screen()
 
     def clear_screen(self):
@@ -65,11 +85,25 @@ class JobManagerApp(TkinterDnD.Tk):
         tk.Label(self, text="Your Jobs:", font=("Arial", 12, "bold")).pack(anchor="w", pady=(10, 5))
         jobs_frame = tk.Frame(self)
         jobs_frame.pack(fill="both", expand=True)
-        for job in PLACEHOLDER_JOBS:
-            link = tk.Label(jobs_frame, text=job, fg="blue", cursor="hand2",
+
+        jobs = self.jobs.list_jobs()
+        if not jobs:
+            tk.Label(jobs_frame, text="No jobs yet. Click '+ Start a New Job'.").pack(anchor="w")
+        for meta in jobs:
+            number = meta.get("job_number", meta.get("job_safe_name", "?"))
+            link = tk.Label(jobs_frame, text=f"Job #{number}", fg="blue", cursor="hand2",
                             font=("Arial", 10, "underline"))
             link.pack(anchor="w", pady=2)
-            link.bind("<Button-1>", lambda _e, j=job: messagebox.showinfo("Job", f"Opening {j}"))
+            link.bind("<Button-1>", lambda _e, m=meta: self.show_job_details(m))
+
+    def show_job_details(self, meta: dict):
+        messagebox.showinfo(
+            "Job",
+            f"Job {meta.get('job_number')}\n\n"
+            f"Folder: {meta.get('job_dir')}\n"
+            f"P&ID: {meta.get('pid_file') or 'none'}\n"
+            f"Scope: {meta.get('scope_file') or 'none'}",
+        )
 
     def open_new_job_window(self):
         NewJobWindow(self)
@@ -78,6 +112,7 @@ class JobManagerApp(TkinterDnD.Tk):
 class NewJobWindow(tk.Toplevel):
     def __init__(self, parent):
         super().__init__(parent)
+        self.parent = parent
         self.title("New Job")
         self.geometry("450x400")
         self.configure(padx=20, pady=20)
@@ -113,7 +148,19 @@ class NewJobWindow(tk.Toplevel):
         if not job_number or "pid" not in self.files or "scope" not in self.files:
             messagebox.showerror("Error", "Enter a job number and provide both files")
             return
-        messagebox.showinfo("Job Created", f"Job {job_number} created (placeholder).")
+        try:
+            metadata = self.parent.jobs.add_job_files(
+                job_number, self.files["pid"], self.files["scope"]
+            )
+        except (OSError, ValueError) as exc:
+            messagebox.showerror("Error", f"Could not create job: {exc}")
+            return
+        messagebox.showinfo(
+            "Job Created",
+            f"Job {job_number} created.\n\nFolder: {metadata.get('job_dir')}\n"
+            f"P&ID: {metadata.get('pid_file')}\nScope: {metadata.get('scope_file')}",
+        )
+        self.parent.show_dashboard()
         self.destroy()
 
 
