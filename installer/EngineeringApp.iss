@@ -19,8 +19,8 @@ OutputBaseFilename=EngineeringAppSetup
 Compression=lzma
 SolidCompression=yes
 WizardStyle=modern
-SetupIconFile=..\assets\engineering-app.ico
-ArchitecturesInstallIn64BitMode=x64
+UninstallDisplayIcon={app}\{#MyAppExeName}
+ArchitecturesInstallIn64BitMode=x64compatible
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
@@ -30,11 +30,10 @@ Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupDescription
 
 [Files]
 Source: "..\dist\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
-Source: "..\assets\engineering-app.ico"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
-Name: "{autoprograms}\Engineering App"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\engineering-app.ico"
-Name: "{autodesktop}\Engineering App"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon; IconFilename: "{app}\engineering-app.ico"
+Name: "{autoprograms}\Engineering App"; Filename: "{app}\{#MyAppExeName}"
+Name: "{autodesktop}\Engineering App"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "Launch Engineering App"; Flags: nowait postinstall skipifsilent
