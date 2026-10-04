@@ -12,7 +12,7 @@ psycopg2-binary==2.9.9
 sqlalchemy==2.0.30
 alembic==1.14.1
 pymongo==4.9.1
-py2neo==2024.3.0
+py2neo==2021.2.4
 
 # Redis for job queue (Phase 3)
 redis==5.2.0
