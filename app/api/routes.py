@@ -238,6 +238,11 @@ async def scan_pid(
         except ValueError:
             raise HTTPException(status_code=400, detail="highlight_mapping must be a JSON object.")
 
+    # BOM exports must outlive the request, so they go to a persistent folder
+    # (the uploaded PDF itself is still processed from a temp dir).
+    export_dir = Path(settings.upload_dir) / "scan_exports"
+    export_dir.mkdir(parents=True, exist_ok=True)
+
     with tempfile.TemporaryDirectory() as tmpdir:
         pdf_path = Path(tmpdir) / sanitize_filename(file.filename)
         pdf_path.write_bytes(content)
@@ -254,7 +259,7 @@ async def scan_pid(
             review_notes=notes_list,
             job_id=f"JOB-{uuid.uuid4().hex[:8]}",
             source_file=pdf_path.name,
-            output_dir=tmpdir,
+            output_dir=str(export_dir),
         )
 
         if result.get("status") == "completed":
