@@ -242,3 +242,7 @@ For the detailed task breakdown and current planning status, see [`IMPLEMENTATIO
 ## License
 
 No license has been specified yet for this project.
+
+## Desktop GUI
+
+Run the Tkinter Job Manager with `python -m app.gui` (requires `tkinterdnd2`, listed in requirements.txt).
