@@ -1,6 +1,5 @@
 # Windows packaging helper
-
-This script builds the GUI executable and then launches the installer build script.
+# Builds the GUI executable, then compiles the installer.
 
 param(
     [switch]$SkipInstaller,
@@ -8,17 +7,17 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+Set-Location $repoRoot
 
-Write-Host "Installing/refreshing required packaging dependencies..." -ForegroundColor Cyan
+Write-Host "Installing required dependencies..." -ForegroundColor Cyan
 python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
 python -m pip install pyinstaller tkinterdnd2==0.4.2
 
-Write-Host "Building executable with PyInstaller..." -ForegroundColor Cyan
-python build_exe.py
-
 if (-not $SkipInstaller) {
-    Write-Host "Building installer..." -ForegroundColor Cyan
-    powershell -ExecutionPolicy Bypass -File .\installer\build-installer.ps1 -InnoCompilerPath $InnoCompilerPath
+    powershell -ExecutionPolicy Bypass -File (Join-Path $repoRoot "installer\build-installer.ps1") -InnoCompilerPath $InnoCompilerPath
 } else {
-    Write-Host "Skipped installer build. Executable should be at dist\JobManager.exe" -ForegroundColor Yellow
+    python build_exe.py
+    Write-Host "Skipped installer build. Executable is at dist\JobManager.exe" -ForegroundColor Yellow
 }
