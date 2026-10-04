@@ -3,8 +3,9 @@
 Launch with: python -m app.gui
 
 "Create Job" creates <uploads>/<job number>.json and copies the P&ID and scope
-into <uploads>/<job number>/pid and /scope. Clicking a job on the dashboard runs
-the BOM scan in the background; the finished BOM is linked next to the job.
+into <uploads>/<job number>/pid and /scope. Clicking a job (or its Regenerate
+BOM button) runs the BOM scan in the background with a progress bar; the
+finished BOM is linked next to the job.
 """
 from __future__ import annotations
 
@@ -14,7 +15,7 @@ import sys
 import threading
 import tkinter as tk
 from pathlib import Path
-from tkinter import messagebox
+from tkinter import messagebox, ttk
 
 from tkinterdnd2 import DND_FILES, TkinterDnD
 
@@ -53,7 +54,7 @@ class JobManagerApp(TkinterDnD.Tk):
     def __init__(self):
         super().__init__()
         self.title("Job Manager App")
-        self.geometry("560x480")
+        self.geometry("640x500")
         self.configure(padx=20, pady=20)
         self.jobs = JobManager(get_upload_dir())
         self.running: set[str] = set()
@@ -72,20 +73,15 @@ class JobManagerApp(TkinterDnD.Tk):
         tk.Label(self, text="Password:").pack(anchor="w")
         self.password_entry = tk.Entry(self, width=40, show="*")
         self.password_entry.pack(pady=5)
+        self.password_entry.bind("<Return>", lambda _e: self.process_login())
         tk.Button(self, text="Login", command=self.process_login, width=20,
                   bg="#4CAF50", fg="white").pack(pady=15)
-        tk.Button(self, text="Create Account", command=self.create_account,
-                  relief="flat", fg="blue").pack()
 
     def process_login(self):
-        # Placeholder for actual backend authentication
-        if self.username_entry.get() and self.password_entry.get():
+        if self.username_entry.get().strip() and self.password_entry.get():
             self.show_dashboard()
         else:
             messagebox.showerror("Error", "Please enter both username and password")
-
-    def create_account(self):
-        messagebox.showinfo("Create Account", "Redirecting to account creation...")
 
     # ------------------------------------------------------------------
     # Dashboard
@@ -109,22 +105,28 @@ class JobManagerApp(TkinterDnD.Tk):
 
     def _job_row(self, parent, meta: dict):
         number = meta.get("job_number") or meta.get("job_safe_name") or "?"
-        # Prefer the job file (<uploads>/<job>.json): it holds the latest BOM links.
+        # The job file (<uploads>/<job>.json) holds the latest BOM links.
         data = self.jobs._load_json(self.jobs.job_file_path(number)) or meta
+        is_running = number in self.running
 
         row = tk.Frame(parent)
-        row.pack(fill="x", anchor="w", pady=2)
+        row.pack(fill="x", anchor="w", pady=3)
 
         link = tk.Label(row, text=f"Job #{number}", fg="blue", cursor="hand2",
                         font=("Arial", 10, "underline"))
         link.pack(side="left")
         link.bind("<Button-1>", lambda _e, n=number: self.start_scan(n))
 
+        if is_running:
+            bar = ttk.Progressbar(row, mode="indeterminate", length=110)
+            bar.pack(side="left", padx=(10, 4))
+            bar.start(12)
+            tk.Label(row, text="Generating BOM...", fg="#b36b00").pack(side="left")
+            return
+
         status = data.get("bom_status")
-        if number in self.running or status == "running" and number in self.running:
-            tk.Label(row, text="  Generating BOM...", fg="#b36b00").pack(side="left")
-        elif status == "completed":
-            tk.Label(row, text="   BOM:", fg="gray").pack(side="left")
+        if status == "completed":
+            tk.Label(row, text="  BOM:", fg="gray").pack(side="left")
             for key, label in (("bom_pdf", "PDF"), ("bom_csv", "CSV"), ("bom_json", "JSON")):
                 path = data.get(key)
                 if path and Path(path).is_file():
@@ -135,7 +137,10 @@ class JobManagerApp(TkinterDnD.Tk):
         elif status == "needs_clarification":
             tk.Label(row, text="  BOM needs review", fg="#b36b00").pack(side="left")
         elif status == "error":
-            tk.Label(row, text="  BOM failed (click job to retry)", fg="red").pack(side="left")
+            tk.Label(row, text="  BOM failed", fg="red").pack(side="left")
+
+        tk.Button(row, text="Regenerate BOM", command=lambda n=number: self.start_scan(n),
+                  relief="groove").pack(side="right")
 
     def _open(self, path: str):
         try:
@@ -168,22 +173,24 @@ class JobManagerApp(TkinterDnD.Tk):
         title = "BOM needs review" if status == "needs_clarification" else "BOM failed"
         messagebox.showwarning(title, f"Job {job_number}: {outcome.get('message')}")
 
-    def open_new_job_window(self):
-        NewJobWindow(self)
+    def open_new_job_window(self, job_number: str = "", files: dict | None = None):
+        NewJobWindow(self, job_number=job_number, files=files)
 
 
 class NewJobWindow(tk.Toplevel):
-    def __init__(self, parent):
+    def __init__(self, parent, job_number: str = "", files: dict | None = None):
         super().__init__(parent)
         self.parent = parent
         self.title("New Job")
         self.geometry("450x400")
         self.configure(padx=20, pady=20)
-        self.files: dict[str, str] = {}
+        self.files: dict[str, str] = dict(files or {})
 
         tk.Label(self, text="Job Number:").pack(anchor="w")
         self.job_number_entry = tk.Entry(self, width=40)
         self.job_number_entry.pack(pady=5)
+        self.job_number_entry.insert(0, job_number)
+        self.job_number_entry.focus_set()
 
         self.pid_label = self._drop_area("P&ID File", "pid")
         self.scope_label = self._drop_area("Scope File", "scope")
@@ -193,8 +200,9 @@ class NewJobWindow(tk.Toplevel):
 
     def _drop_area(self, title: str, key: str) -> tk.Label:
         tk.Label(self, text=f"{title}:").pack(anchor="w", pady=(10, 0))
-        area = tk.Label(self, text=f"Drag & drop {title} here", relief="groove",
-                        bd=2, height=4, bg="#f0f0f0")
+        current = self.files.get(key)
+        area = tk.Label(self, text=current or f"Drag & drop {title} here", relief="groove",
+                        bd=2, height=4, bg="#f0f0f0", wraplength=380)
         area.pack(fill="x", pady=5)
         area.drop_target_register(DND_FILES)
         area.dnd_bind("<<Drop>>", lambda event, k=key, a=area: self._on_drop(event, k, a))
@@ -208,8 +216,16 @@ class NewJobWindow(tk.Toplevel):
 
     def submit(self):
         job_number = self.job_number_entry.get().strip()
-        if not job_number or "pid" not in self.files or "scope" not in self.files:
-            messagebox.showerror("Error", "Enter a job number and provide both files")
+        if not job_number:
+            # No job number: return to a fresh Create Job screen (dropped files are kept).
+            messagebox.showerror("Job number required", "Please enter a job number.")
+            files = dict(self.files)
+            parent = self.parent
+            self.destroy()
+            parent.open_new_job_window(files=files)
+            return
+        if "pid" not in self.files or "scope" not in self.files:
+            messagebox.showerror("Error", "Provide both the P&ID file and the Scope file.")
             return
         try:
             data = self.parent.jobs.add_job_files(
