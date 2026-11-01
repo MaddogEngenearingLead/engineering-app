@@ -80,6 +80,19 @@ def save_review(jm: JobManager, job_number: str, materials: list[dict],
     return paths
 
 
+def _replay_answers(result: dict, materials: list[dict], old: dict) -> dict:
+    """Re-apply earlier answers to a fresh scan so re-generating the BOM keeps them."""
+    from app.services.review_questions import apply_answer, build_questions, ensure_uids
+
+    ensure_uids(materials)
+    kept = {}
+    for q in build_questions(result.get("flags", []), materials):
+        prior = old.get(q["id"])
+        if prior and prior.get("input") is not None:
+            kept[q["id"]] = apply_answer(materials, q, prior["input"])
+    return kept
+
+
 def run_job_scan(jm: JobManager, job_number: str, demo_pages: list[int] | None = None,
                  new_work_pages: list[int] | None = None) -> dict:
     """Scan the job's P&ID against its scope and generate the BOM.
@@ -131,12 +144,15 @@ def run_job_scan(jm: JobManager, job_number: str, demo_pages: list[int] | None =
         def _p(value):
             return str(Path(value).resolve()) if value else None
 
+        previous = load_review(jm, job_number) or {}
+        materials = result.get("materials") or []
+        answers = _replay_answers(result, materials, previous.get("answers") or {})
         _review_path(jm, job_number).write_text(json.dumps({
             "pid_file": str(pid_path.resolve()),
             "result": result,
-            "materials": result.get("materials") or [],
-            "clarifications": [],
-            "answers": {},
+            "materials": materials,
+            "clarifications": previous.get("clarifications", []),
+            "answers": answers,
         }, indent=2, default=str))
 
         _store(jm, job_number, {
@@ -148,6 +164,8 @@ def run_job_scan(jm: JobManager, job_number: str, demo_pages: list[int] | None =
             "bom_generated_at": datetime.now().isoformat(),
             "bom_item_count": len(result.get("materials") or []),
         })
+        if answers:
+            save_review(jm, job_number, materials, previous.get("clarifications", []), answers)
         return {"status": "completed", "message": "BOM generated.", "result": result}
     except Exception as exc:  # keep the GUI alive
         logger.exception("BOM scan failed for %s", job_number)

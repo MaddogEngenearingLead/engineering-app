@@ -208,3 +208,32 @@ def test_answers_change_bom_and_resolve_question(pid, tmp_path):
     data = json.load(open(paths["bom_json"]))
     assert any(m["description"] == "Test valve" for m in data["materials"])
     assert load_review(jm, "T-8")["answers"]["qx"]["id"] == "qx"
+
+
+def test_rescan_keeps_answers(pid, tmp_path):
+    import json
+    from app.job_manager import JobManager
+    from app.services.job_scan import load_review, run_job_scan, save_review
+    from app.services.review_questions import apply_answer, build_questions, ensure_uids
+
+    scope = tmp_path / "scope.txt"
+    scope.write_text("Install PCV-101 and the VFD-1 drive.")
+    jm = JobManager(str(tmp_path / "uploads"))
+    jm.create_job("T-7")
+    jm.add_job_files("T-7", str(pid), str(scope))
+    run_job_scan(jm, "T-7")
+    review = load_review(jm, "T-7")
+    mats = review["materials"]
+    ensure_uids(mats)
+    qs = build_questions(review["result"]["flags"], mats)
+    if not qs:
+        return
+    q = qs[0]
+    answers = {q["id"]: apply_answer(mats, q, {
+        "choice": q["choices"][0][0] if q.get("choices") else None,
+        "checks": [i["tag"] for i in q.get("items", [])][:1], "fields": {}, "comment": ""})}
+    save_review(jm, "T-7", mats, [], answers)
+    run_job_scan(jm, "T-7")
+    again = load_review(jm, "T-7")
+    assert q["id"] in again["answers"]
+    assert len(again["materials"]) == len(mats)
