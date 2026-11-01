@@ -253,3 +253,17 @@ def test_new_work_not_in_scope_is_left_off_and_asked(pid, tmp_path):
     mats = r["materials"]
     apply_answer(mats, q, {"checks": [flag["items"][0]["tag"]], "fields": {}})
     assert flag["items"][0]["tag"] in {m["tag_id"] for m in mats}
+
+
+def test_reference_only_items_are_not_on_the_bom():
+    from app.services.bom_select import _referenced
+
+    def item(tag, desc):
+        return {"tag_id": tag, "description": desc, "scope_match": "", "description_source": "legend"}
+
+    scope = ("Demolish tank 1 sight glass. Install 4in skillets to both tanks. Install new 2in drain line "
+             "from Tank 1 up to the fuel room. Install new pressure gauge. Replace TK-9.")
+    assert not _referenced(scope, item("TK-1", "Tank"))
+    assert _referenced(scope, item("PG", "Pressure Gauge"))
+    assert _referenced(scope, item("TK-9", "Tank"))
+    assert _referenced("PCV-101 and VFD-1", item("PCV-101", "Pressure Control Valve"))  # plain list

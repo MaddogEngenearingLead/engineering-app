@@ -64,9 +64,10 @@ def _question(i: int, f: dict, materials: list[dict]) -> dict | None:
         return {**base, "kind": "checklist", "items": f["items"],
                 "locations": [l for it in f["items"] for l in it["locations"]],
                 "title": f"New-work items not in the scope ({len(f['items'])})",
-                "question": "These items are marked as new work on the drawing, but the scope of work never "
-                            "mentions them (by tag or by item type), so they were left off the BOM. Tick any "
-                            "that are actually needed.",
+                "question": "These items are marked as new work on the drawing, but the scope of work doesn't "
+                            "call for them: it never mentions them, or only uses them as a location or reference "
+                            "(for example \"at tank 1\"). They were left off the BOM. Tick any that are "
+                            "actually needed.",
                 "why": "The BOM only lists what the scope of work calls for. Ticked items are added with the "
                        "quantity shown.",
                 "choices": []}
