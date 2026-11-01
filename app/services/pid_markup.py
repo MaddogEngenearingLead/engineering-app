@@ -5,8 +5,7 @@ import math
 import re
 
 _BOILERPLATE = re.compile(
-    r"^(future work|draft p&id|new installation drawing|demo drawing|all bold piping|tank$|from |to |"
-    r"first floor|upper fuel|\d+(\.\d+)?( psig)?$)", re.I)
+    r"^(future work|draft\b|.*\bdrawing\b|\d+(\.\d+)?( psig)?$)", re.I)
 _ACTION = re.compile(r"\b(replace|reinstall|repair|install|provide|add|relocate|new|remove|demo\w*|"
                      r"re-?use|extend)\b", re.I)
 _PIPE_SIZE = re.compile(r'^(\d+(?:-\d/\d)?|\d/\d)"$')

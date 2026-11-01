@@ -86,8 +86,12 @@ def _section_page(section: str, page_text: dict, new: list, page_title: dict):
     return None
 
 
+_EQUIPMENT_NOUNS = ("surge", "filter", "separator", "strainer", "vessel", "heater", "exchanger",
+                    "compressor", "drum", "pump")
+
+
 def _anchors(sources: list, scans: dict, page_words: dict, page: int, locate) -> list[dict]:
-    """Equipment the scope sentence refers to ('tank 1', 'surge tank'), located on the section's page."""
+    """Equipment the scope sentence refers to ('tank 1', 'filter'), located on the section's page."""
     text = " ".join(sources).lower()
     out = []
     for m in re.finditer(r"\b([a-z]{1,5})-?(\d{1,4})\b", text):
@@ -98,13 +102,13 @@ def _anchors(sources: list, scans: dict, page_words: dict, page: int, locate) ->
         for o in scans[page]["occurrences"]:
             if o["prefix"] == "TK" and o["number"].lstrip("0") == m.group(1):
                 out.append({**_loc(o, page), "tag": f"TK-{m.group(1)}"})
-    for pattern, word in ((r"surge|serge", "SURGE"), (r"filter", "FILTER")):
-        if re.search(pattern, text):
-            for w in page_words.get(page, []):
-                if w["text"].upper().startswith(word):
-                    out.append({"page": page, "x": round(w["x0"], 1), "y": round(w["top"], 1),
-                                "grid": locate(w["x0"], w["top"]), "tag": word.title()})
-                    break
+    # equipment nouns in the scope sentence ("surge tank", "filter separator") found as words on the drawing
+    for noun in sorted(set(re.findall(r"\b(" + "|".join(_EQUIPMENT_NOUNS) + r")\w*", text))):
+        for w in page_words.get(page, []):
+            if w["text"].lower().startswith(noun):
+                out.append({"page": page, "x": round(w["x0"], 1), "y": round(w["top"], 1),
+                            "grid": locate(w["x0"], w["top"]), "tag": w["text"].title()})
+                break
     return out
 
 
