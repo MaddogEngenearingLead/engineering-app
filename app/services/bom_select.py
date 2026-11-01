@@ -148,6 +148,23 @@ def _note_context(n: dict, occs: list, words: list, symbol_legend: dict, scope_t
     return "; ".join(parts)
 
 
+def _referenced(scope_text: str, m: dict) -> bool:
+    """Does the scope mention this item by tag, by its code, or by most words of its name?"""
+    low = scope_text.lower()
+    code = re.sub(r"[-\d].*$", "", m["tag_id"] or "").lower()
+    parts = re.match(r"([A-Za-z]+)[\s-]*(\d.*)$", m["tag_id"] or "")
+    tagged = bool(parts and re.search(
+        rf"(?<![A-Za-z0-9]){re.escape(parts.group(1))}[\s-]*{re.escape(parts.group(2))}(?![0-9A-Za-z])",
+        scope_text, re.I))
+    if tagged or (len(code) > 2 and re.search(rf"\b{re.escape(code)}s?\b", low)):
+        return True
+    words = sorted(set(re.findall(r"[a-z]{3,}", (m["description"] or "").lower())))
+    if m.get("description_source") == "default" or not words:
+        return False
+    hit = sum(1 for w in words if re.search(rf"\b{re.escape(w)}(e?s)?\b", low))
+    return hit / len(words) >= 0.75
+
+
 def select_items(pdf, by_page, demo, new, *, legend, abbreviations, symbol_legend, colour_scheme,
                  scope_text, describe_tag, legend_prefixes, meaning_of, new_work, scope_match) -> dict:
     first = legend["instrument_key"]["first_letters"]
@@ -328,8 +345,25 @@ def select_items(pdf, by_page, demo, new, *, legend, abbreviations, symbol_legen
                          (f"p{page} (page only, {si['section'] or 'see drawing'})" if page else "")),
             "locations": anchors, "page": page, "origin": "scope"})
 
+    # Drawn as new work but never mentioned in the scope (by tag or item type): not needed
+    # for this job unless the user says so.
+    unreferenced = []
+    if (scope_text or "").strip():
+        unreferenced = [m for m in materials
+                        if m["origin"] == "drawing" and m["type"] != "piping"
+                        and not _referenced(scope_text, m)]
+        materials = [m for m in materials if m not in unreferenced]
+        tag_infos = [t for t in tag_infos if t["tag"] not in {m["tag_id"] for m in unreferenced}]
     for i, m in enumerate(materials, 1):
         m["item_number"] = i
+    if unreferenced:
+        flags.append({"type": "new_work_not_in_scope", "severity": "review",
+                      "items": [{"tag": m["tag_id"], "description": m["description"], "quantity": m["quantity"],
+                                 "pages": [int(x) for x in m["pages"].split(",") if x], "location": m["location"],
+                                 "locations": m["locations"], "type": m["type"]} for m in unreferenced],
+                      "message": f"{len(unreferenced)} item type(s) are marked as new work on the drawing but "
+                                 "are not mentioned in the scope, so they were left off the BOM: "
+                                 + ", ".join(m["tag_id"] for m in unreferenced[:15]) + "."})
 
     # unidentified tag-like items + items named in scope but drawn as existing
     unrecognised = sorted({t for p in new for t in scans[p]["unrecognised"]})
