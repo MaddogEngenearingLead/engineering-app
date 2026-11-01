@@ -6,14 +6,26 @@ question is then recorded as resolved on the exported BOM instead of staying ope
 """
 from __future__ import annotations
 
+import hashlib
 import uuid
 
 NO_CHANGE = "none"
 
 
 def ensure_uids(materials: list[dict]) -> None:
+    """Give each item an id derived from its content so it survives a re-scan."""
+    seen: set[str] = set()
     for m in materials:
-        m.setdefault("uid", uuid.uuid4().hex[:8])
+        if m.get("uid"):
+            seen.add(m["uid"])
+            continue
+        key = "|".join(str(m.get(k, "")) for k in ("tag_id", "description", "type", "pages", "page"))
+        uid, n = hashlib.md5(key.encode()).hexdigest()[:8], 0
+        while uid in seen:
+            n += 1
+            uid = hashlib.md5(f"{key}#{n}".encode()).hexdigest()[:8]
+        seen.add(uid)
+        m["uid"] = uid
 
 
 def _loc_text(f: dict) -> str:
@@ -32,7 +44,7 @@ def build_questions(flags: list[dict], materials: list[dict]) -> list[dict]:
 
 def _question(i: int, f: dict, materials: list[dict]) -> dict | None:
     t = f.get("type")
-    qid = f"q{i}-{t}"
+    qid = f"{t}-" + hashlib.md5(f"{t}|{f.get('message', '')}".encode()).hexdigest()[:8]
     base = {"id": qid, "flag_type": t, "severity": f.get("severity", "review"),
             "locations": [], "message": f.get("message", "")}
 
