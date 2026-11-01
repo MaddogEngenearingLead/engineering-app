@@ -76,7 +76,7 @@ def scan(pid, tmp_path, scope):
 
 
 def test_tag_letter_suffix_and_extra_prefix():
-    tags = {t["tag"] for t in extract_tags_from_text("JFSP-2A and JFSP-2B, PCV 101", ["PCV"])}
+    tags = {t["tag"] for t in extract_tags_from_text("JFSP-2A and JFSP-2B, PCV 101", ["PCV", "JFSP"])}
     assert tags == {"JFSP-2A", "JFSP-2B", "PCV-101"}
     assert "PCV-101" not in {t["tag"] for t in extract_tags_from_text("PCV-101")}
 
@@ -267,3 +267,14 @@ def test_reference_only_items_are_not_on_the_bom():
     assert _referenced(scope, item("PG", "Pressure Gauge"))
     assert _referenced(scope, item("TK-9", "Tank"))
     assert _referenced("PCV-101 and VFD-1", item("PCV-101", "Pressure Control Valve"))  # plain list
+
+
+def test_vocabulary_file_loads(tmp_path, monkeypatch):
+    from app.services import vocabulary
+    f = tmp_path / "v.json"
+    f.write_text('{"codes": {"xyz": "Custom Device"}, "ignore_prefixes": ["abc"], "scope_aliases": {"Widget": ["xyz"]}}')
+    monkeypatch.setenv("VOCABULARY_FILE", str(f))
+    v = vocabulary.load_vocabulary()
+    assert v["codes"] == {"XYZ": "Custom Device"}
+    assert v["ignore_prefixes"] == {"ABC"}
+    assert v["scope_aliases"]["Widget"] == {"XYZ"}

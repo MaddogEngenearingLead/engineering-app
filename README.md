@@ -121,3 +121,11 @@ See [`IMPLEMENTATION_ROADMAP.md`](IMPLEMENTATION_ROADMAP.md) for what is done an
 ## License
 
 No license has been specified yet.
+
+## Using other drawings and vocabulary
+
+Nothing is tied to a particular drawing. Codes come from each drawing's own legend and from tag prefixes repeated on its pages. To add your own codes, place a `vocabulary.json` next to the program:
+
+```json
+{"codes": {"XYZ": "Custom Device"}, "ignore_prefixes": ["DWG"], "scope_aliases": {"Pneumatic Valve": ["POV"]}}
+```
