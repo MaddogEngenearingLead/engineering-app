@@ -148,7 +148,49 @@ def _note_context(n: dict, occs: list, words: list, symbol_legend: dict, scope_t
     return "; ".join(parts)
 
 
+_SUPPLY = r"(?:install|provide|furnish|supply|replace|add|fabricate|erect|relocate|reinstall|new)"
+_PREPS = {"at", "on", "to", "from", "between", "into", "of", "in", "around", "near", "for", "by", "with",
+          "up", "onto", "off", "over", "under", "through", "w/", "per", "against", "beside"}
+
+
+def _acted_on(scope_text: str, m: dict) -> bool:
+    """Is the item itself installed/provided/replaced (a supply verb directly followed by it),
+    rather than only named as a place or reference ("at tank 1", "to both tanks")?
+    Scopes with no supply verbs at all (plain lists) are not filtered."""
+    if not re.search(rf"\b{_SUPPLY}\b", scope_text, re.I):
+        return True
+    tag = m["tag_id"] or ""
+    parts = re.match(r"([A-Za-z]+)[\s-]*(\d.*)$", tag)
+    names = []
+    if parts:
+        names.append(rf"{re.escape(parts.group(1))}[\s-]*{re.escape(parts.group(2))}")
+    code = re.sub(r"[-\d].*$", "", tag)
+    if len(code) > 2:
+        names.append(re.escape(code))
+    words = re.findall(r"[A-Za-z]{3,}", m["description"] or "")
+    if words:
+        names.append(rf"{re.escape(words[-1])}(?:e?s)?")
+    if not names:
+        return True
+    mention = re.compile(rf"(?<![A-Za-z0-9])(?:{'|'.join(names)})(?![A-Za-z0-9])", re.I)
+    for sentence in re.split(r"[.;\n]", scope_text):
+        for v in re.finditer(rf"\b{_SUPPLY}\b", sentence, re.I):
+            tokens = sentence[v.end():].split()
+            for i, tok in enumerate(tokens[:6]):
+                if tok.lower().strip(",()") in _PREPS:
+                    break
+                if re.fullmatch(rf"(?:{'|'.join(names)})[,)]*", tok.strip("(").strip(), re.I):
+                    return True
+    return False
+
+
 def _referenced(scope_text: str, m: dict) -> bool:
+    """Is the item called for by the scope: named by tag/code/name AND installed, provided or
+    replaced (not merely used as a location or reference)?"""
+    return _mentioned(scope_text, m) and _acted_on(scope_text, m)
+
+
+def _mentioned(scope_text: str, m: dict) -> bool:
     """Does the scope mention this item by tag, by its code, or by most words of its name?"""
     low = scope_text.lower()
     code = re.sub(r"[-\d].*$", "", m["tag_id"] or "").lower()
@@ -362,7 +404,7 @@ def select_items(pdf, by_page, demo, new, *, legend, abbreviations, symbol_legen
                                  "pages": [int(x) for x in m["pages"].split(",") if x], "location": m["location"],
                                  "locations": m["locations"], "type": m["type"]} for m in unreferenced],
                       "message": f"{len(unreferenced)} item type(s) are marked as new work on the drawing but "
-                                 "are not mentioned in the scope, so they were left off the BOM: "
+                                 "are not called for by the scope (not mentioned, or only used as a location or reference), so they were left off the BOM: "
                                  + ", ".join(m["tag_id"] for m in unreferenced[:15]) + "."})
 
     # unidentified tag-like items + items named in scope but drawn as existing
