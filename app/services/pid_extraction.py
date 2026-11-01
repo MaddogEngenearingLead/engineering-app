@@ -78,53 +78,54 @@ def extract_words_with_coords(file_path: str) -> list[dict]:
         return []
 
 
-def extract_tags_from_text(text: str) -> list[dict[str, object]]:
+def pad_number(prefix: str, number: str) -> str:
+    """Zero-pad MOV numbers to 3 digits ('1A' -> '001A') for consistent deduplication."""
+    if prefix == "MOV":
+        m = re.match(r"(\d+)(\D*)$", number)
+        if m:
+            return m.group(1).zfill(3) + m.group(2)
+    return number
+
+
+def extract_tags_from_text(text: str, extra_prefixes=None) -> list[dict[str, object]]:
     """
-    Extract equipment tags from text using improved regex patterns.
-    - Only matches known equipment prefixes (allowlist)
+    Extract equipment tags from text.
+    - Matches the built-in allowlist plus ``extra_prefixes`` (e.g. legend abbreviations)
     - Matches within single lines only (no cross-line matches)
+    - Accepts an optional letter suffix (P-101A / P-101B are separate items)
     - Zero-pads valve numbers for deduplication
     - Skips false positives (denylist)
     """
     tags = []
     seen = set()
 
-    # Build a regex pattern from the allowlist
-    # Sort by length descending so longer prefixes match first (e.g., JFSP before J)
-    sorted_prefixes = sorted(VALID_PREFIXES, key=len, reverse=True)
-    prefix_pattern = "|".join(re.escape(p) for p in sorted_prefixes)
+    extras = {p.upper() for p in (extra_prefixes or ()) if p and p.isalpha()}
+    extras -= DENYLIST_PREFIXES
+    all_prefixes = VALID_PREFIXES | extras
+    # Longest first so JFSP wins over J
+    prefix_pattern = "|".join(re.escape(p) for p in sorted(all_prefixes, key=len, reverse=True))
 
-    # Pattern: prefix (2-5 letters) + optional dash/spaces (same line only) + 1-4 digits
-    # Use [ \t]* to match spaces/tabs on the same line only (not newlines)
-    pattern = rf"\b({prefix_pattern})[ \t]*-?[ \t]*(\d{{1,4}})\b"
+    # prefix + optional dash/spaces (same line only) + 1-4 digits + optional letter suffix
+    pattern = rf"\b({prefix_pattern})[ \t]*-?[ \t]*(\d{{1,4}}[A-Za-z]?)\b"
 
-    matches = re.finditer(pattern, text, re.IGNORECASE)
-    for match in matches:
+    for match in re.finditer(pattern, text, re.IGNORECASE):
         prefix = match.group(1).upper()
-        number = match.group(2)
+        number = pad_number(prefix, match.group(2).upper())
 
-        # Skip if prefix is in denylist
         if prefix in DENYLIST_PREFIXES:
             continue
 
-        # Zero-pad MOV and similar valve numbers to 3 digits for consistency
-        if prefix == "MOV" and len(number) < 3:
-            number = number.zfill(3)
-
         full_tag = f"{prefix}-{number}"
-
-        if full_tag not in seen:
-            seen.add(full_tag)
-
-            equipment_type = infer_equipment_type(prefix)
-
-            tags.append({
-                "tag": full_tag,
-                "type": equipment_type,
-                "confidence": 0.85,
-                "source": "regex_extraction",
-                "prefix": prefix,
-            })
+        if full_tag in seen:
+            continue
+        seen.add(full_tag)
+        tags.append({
+            "tag": full_tag,
+            "type": infer_equipment_type(prefix),
+            "confidence": 0.85,
+            "source": "regex_extraction" if prefix in VALID_PREFIXES else "legend_prefix",
+            "prefix": prefix,
+        })
 
     return tags
 
