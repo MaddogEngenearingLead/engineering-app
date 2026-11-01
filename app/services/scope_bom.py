@@ -28,7 +28,7 @@ from app.services.pid_extraction import (
     generate_bom_from_tags,
     infer_equipment_type,
 )
-from app.services.pid_scope import scope_items
+from app.services.bom_select import select_items
 from app.services.pid_markup import markup_items, parse_symbol_legend
 
 DEMO = "demo"
@@ -733,10 +733,6 @@ def build_scoped_bom(
         if not instrument_key["entries_found"] and legend_pg:
             instrument_key = parse_instrument_key(by_page[legend_pg]["text"])
         symbol_legend = parse_symbol_legend(pdf.pages[legend_pg - 1]) if legend_pg else {}
-        for k, v in list(symbol_legend.items()):
-            symbol_legend.setdefault(k.replace("/", ""), v)
-        if "PI" in symbol_legend:
-            symbol_legend.setdefault("PG", symbol_legend["PI"])
         if len(symbol_legend) >= 5:
             # symbol-style legend: text rows are names, not abbreviations; keep only explicit "XX - name" entries
             abbreviations = {k: v for k, v in abbreviations.items()
@@ -751,174 +747,14 @@ def build_scoped_bom(
         for key, meaning in mapping.items():
             colour_scheme[key] = {"meaning": meaning, "confidence": 1.0}
 
-        # 4. tags: built-in allowlist + legend abbreviations + instrument-key decoding
-        extra = legend_prefixes(abbreviations)
-
-        def page_tag_infos(page_no: int) -> list[dict]:
-            text = by_page[page_no]["text"]
-            infos = extract_tags_from_text(text, extra)
-            infos += find_key_tags(text, legend, {t["tag"] for t in infos})
-            return infos
-
-        tag_infos: list[dict] = []
-        tag_pages: dict[str, list[int]] = {}
-        for p in new:
-            for t in page_tag_infos(p):
-                if t["tag"] not in tag_pages:
-                    tag_infos.append(t)
-                tag_pages.setdefault(t["tag"], []).append(p)
-        demo_tags = {t["tag"] for p in demo for t in page_tag_infos(p)}
-        all_tags = [t["tag"] for t in tag_infos]
-
-        highlighted: set = set()
-        untagged_items: list[dict] = []
-        for p in new:
-            on_page = {t["tag"] for t in page_tag_infos(p)}
-            markup = analyze_page_markup(pdf.pages[p - 1], on_page, colour_scheme)
-            highlighted |= markup["highlighted"]
-            untagged_items += [{**u, "page": p} for u in markup["untagged"]]
-
-        # reviewer markup: instrument bubbles, piping runs and callout notes in new-work colours
-        new_colours = {tuple(json.loads(k)) for k, v in colour_scheme.items()
-                       if _meaning_of(v) == NEW_WORK}
-        markup = {"bubbles": [], "pipes": [], "notes": []}
-        for p in new:
-            found = markup_items(pdf.pages[p - 1], new_colours, symbol_legend)
-            for kind in markup:
-                markup[kind] += [{**i, "page": p} for i in found[kind]]
-
-        known = set(all_tags) | demo_tags
-        for p in new:
-            missing = unidentified_tags(by_page[p]["text"], known)
-            if missing:
-                flags.append({"type": "unidentified_tags", "severity": "review", "page": p, "tags": missing[:20],
-                              "message": f"Page {p}: tag-like items not recognised by the legend or "
-                                         f"instrument key: {', '.join(missing[:10])}."})
-
-        # 5. compare the new-work pages with the scope and decide what is needed
-        descriptions = {t: describe_tag(t, legend) for t in all_tags}
-        needed, excluded = [], []
-        for info in tag_infos:
-            tag = info["tag"]
-            match = scope_match(scope_text or "", tag, descriptions[tag])
-            is_hl = tag in highlighted
-            unchanged = bool(demo) and tag in demo_tags
-            if is_hl:
-                basis = "highlighted as new work"
-            elif match == "tag":
-                basis = "named in scope"
-            elif match == "description":
-                basis = "item type named in scope"
-            elif not unchanged:
-                basis = "new on new-work page"
-            else:
-                excluded.append({"tag": tag, "pages": tag_pages[tag],
-                                 "reason": "on demo and new-work pages, not highlighted, not in scope"})
-                continue
-            needed.append((info, match, is_hl, basis))
-        tags = [info["tag"] for info, *_ in needed]
-        flags.extend(cross_check_scope(scope_text, tags, descriptions))
-        if excluded:
-            flags.append({"type": "unchanged_items_excluded", "severity": "info", "items": excluded,
-                          "message": f"{len(excluded)} existing item(s) left out of the BOM (on both demo and "
-                                     f"new-work pages, not highlighted, not in scope): "
-                                     f"{', '.join(e['tag'] for e in excluded[:15])}."})
-
-        # 6. BOM
-        materials = []
-        for info, match, is_hl, basis in needed:
-            tag = info["tag"]
-            d = descriptions[tag]
-            row = generate_bom_from_tags([info])[0]
-            row.update({"item_number": len(materials) + 1, "description": d["description"],
-                        "description_source": d["source"], "confidence": d["confidence"],
-                        "scope_match": match or "", "highlighted": is_hl, "basis": basis,
-                        "pages": ",".join(str(p) for p in tag_pages[tag])})
-            materials.append(row)
-
-        # highlighted new-work markup that has no tag (e.g. "NEW 4in FLANGE")
-        grouped: dict[str, dict] = {}
-        for u in untagged_items:
-            if u["text"] and all(w.upper() in _MARKUP_NOISE for w in u["text"].split()):
-                continue
-            if not u["text"]:
-                flags.append({"type": "untagged_highlight", "severity": "review", "page": u["page"],
-                              "message": f"Highlighted new-work item with no text on page {u['page']} "
-                                         f"near ({u['x']}, {u['y']}); identify manually."})
-                continue
-            g = grouped.setdefault(u["text"].lower(), {"text": u["text"], "pages": set(), "qty": 0})
-            g["pages"].add(u["page"])
-            g["qty"] += 1
-        for g in grouped.values():
-            materials.append({
-                "item_number": len(materials) + 1, "tag_id": "-", "description": _title_case(g["text"]),
-                "type": "highlighted_item", "quantity": g["qty"], "unit": "ea", "confidence": 0.4,
-                "description_source": "highlight_text",
-                "scope_match": "" if not scope_text else (
-                    "description" if scope_match(scope_text, "-", {"description": g["text"], "source": "highlight"})
-                    else ""),
-                "highlighted": True, "basis": "highlighted as new work (no tag)",
-                "pages": ",".join(str(p) for p in sorted(g["pages"])),
-            })
-            flags.append({"type": "untagged_highlight", "severity": "review",
-                          "message": f"Highlighted item without a tag added to the BOM: '{g['text']}' - verify."})
-        by_tag = {m["tag_id"]: m for m in materials if m["tag_id"] != "-"}
-        bubble_groups: dict[str, dict] = {}
-        for b in markup["bubbles"]:
-            tag = f"{b['code']}-{b['number']}" if b["number"] else b["code"]
-            g = bubble_groups.setdefault(tag, {"code": b["code"], "qty": 0, "pages": set()})
-            g["qty"] += 1
-            g["pages"].add(b["page"])
-        for tag, g in bubble_groups.items():
-            if tag in by_tag:
-                by_tag[tag]["highlighted"] = True
-                continue
-            d = describe_tag(f"{tag}", legend)
-            name = symbol_legend.get(g["code"]) or (d["description"] if d["source"] != "default" else "Instrument")
-            materials.append({
-                "item_number": len(materials) + 1, "tag_id": tag, "description": name,
-                "type": "instrument", "quantity": g["qty"], "unit": "ea",
-                "confidence": 0.8 if g["code"] in symbol_legend else 0.5,
-                "description_source": "legend_symbol" if g["code"] in symbol_legend else d["source"],
-                "scope_match": "", "highlighted": True, "basis": "highlighted instrument/symbol",
-                "pages": ",".join(str(p) for p in sorted(g["pages"]))})
-        pipe_groups: dict[str, dict] = {}
-        for pp in markup["pipes"]:
-            g = pipe_groups.setdefault(pp["spec"], {"runs": 0, "segments": 0, "pages": set()})
-            g["runs"] += 1
-            g["segments"] += pp["segments"]
-            g["pages"].add(pp["page"])
-        for spec, g in pipe_groups.items():
-            known_spec = spec != "unidentified"
-            materials.append({
-                "item_number": len(materials) + 1, "tag_id": "-",
-                "description": f"Piping {spec} (highlighted new run)" if known_spec else "Piping, size not determined (highlighted new run)",
-                "type": "piping", "quantity": g["runs"], "unit": "run", "confidence": 0.4 if known_spec else 0.2,
-                "description_source": "markup", "scope_match": "", "highlighted": True,
-                "basis": "highlighted pipe run (size from nearest label)",
-                "pages": ",".join(str(p) for p in sorted(g["pages"]))})
-        if pipe_groups:
-            flags.append({"type": "piping_runs", "severity": "review",
-                          "message": "Highlighted piping is listed as runs with the nearest size label; "
-                                     "lengths and fittings must be taken off the drawing manually."})
-        seen_notes = set()
-        for n in markup["notes"]:
-            key = n["text"].upper()
-            if key in seen_notes:
-                continue
-            seen_notes.add(key)
-            flags.append({"type": "markup_note", "severity": "review", "page": n["page"],
-                          "message": f"Markup note on page {n['page']}: {n['text']}"})
-        for si in scope_items(scope_text or ""):
-            materials.append({
-                "item_number": len(materials) + 1, "tag_id": "-", "description": si["description"],
-                "type": "scope_item", "quantity": si["quantity"], "unit": "ea", "confidence": 0.5,
-                "description_source": "scope_of_work", "scope_match": "scope", "highlighted": False,
-                "basis": "named in scope of work (quantity from scope text; verify against P&ID)",
-                "pages": ""})
-        if not materials:
-            flags.append({"type": "no_tags_found", "severity": "warning",
-                          "message": "No equipment tags found on new-work pages."})
+        # 4-6. decide what is needed: new-work markup + scope of work (see bom_select)
+        selection = select_items(
+            pdf, by_page, demo, new, legend=legend, abbreviations=abbreviations, symbol_legend=symbol_legend,
+            colour_scheme=colour_scheme, scope_text=scope_text, describe_tag=describe_tag,
+            legend_prefixes=legend_prefixes, meaning_of=_meaning_of, new_work=NEW_WORK, scope_match=scope_match)
+        materials, tag_infos = selection["materials"], selection["tag_infos"]
+        excluded, summary = selection["excluded"], selection["summary"]
+        flags.extend(selection["flags"])
 
         job_match = re.search(r"Job\s*#\s*\d+-\d+", " ".join([scope_text or "", by_page[1]["text"] if by_page else ""]), re.I)
         job_number = re.sub(r"\s+", "", job_match.group(0)) if job_match else None
@@ -983,6 +819,9 @@ def build_scoped_bom(
         "colour_scheme": colour_scheme,
         "detected_assets": tag_infos,
         "excluded_items": excluded,
+        "demolished_items": selection["demolished"],
+        "summary": summary,
+        "scope_text": scope_text or "",
         "materials": materials,
         "flags": flags,
         "bom_pdf": bom_pdf,

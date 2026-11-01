@@ -29,6 +29,14 @@ def selftest() -> int:
     jm.add_job_files("T-1", str(d / "pid.pdf"), str(d / "scope.txt"))
     out = run_job_scan(jm, "T-1")
     print("SELFTEST", out["status"], out.get("message"))
+    from app.gui.review_window import render_location
+    from app.services.job_scan import load_review, save_review
+
+    if out["status"] == "completed":
+        assert render_location(str(d / "pid.pdf"), 2, 100, 100)[:4] == b"\x89PNG", "preview failed"
+        review = load_review(jm, "T-1")
+        save_review(jm, "T-1", review["materials"], ["selftest note"])
+        print("SELFTEST review ok")
     return 0 if out["status"] == "completed" else 1
 
 
