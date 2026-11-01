@@ -7,6 +7,7 @@ import tkinter as tk
 from tkinter import messagebox, simpledialog, ttk
 
 from app.services.job_scan import load_review, save_review
+from app.services.review_questions import (apply_answer, build_questions, ensure_uids, undo_answer)
 
 
 def render_location(pdf_path: str, page: int, x: float, y: float, half: int = 260):
@@ -132,6 +133,70 @@ class LocationViewer(tk.Toplevel):
         self.next_btn.config(state=state)
 
 
+class QuestionDialog(tk.Toplevel):
+    """Shows one question: what is asked, why, where, and the answer controls."""
+
+    def __init__(self, parent, q: dict, previous: dict | None, show_cb):
+        super().__init__(parent)
+        self.q, self.result = q, None
+        self.title("Question")
+        self.configure(padx=14, pady=12)
+        prev_in = (previous or {}).get("input") or {}
+        tk.Label(self, text=q["title"], font=("Arial", 12, "bold"), wraplength=620, justify="left"
+                 ).pack(anchor="w")
+        tk.Label(self, text=q["question"], wraplength=620, justify="left").pack(anchor="w", pady=(8, 4))
+        why = tk.LabelFrame(self, text="Why am I being asked?", padx=6, pady=4)
+        why.pack(fill="x", pady=6)
+        tk.Label(why, text=q["why"], wraplength=600, justify="left", fg="#444").pack(anchor="w")
+        if q.get("locations"):
+            tk.Button(self, text=f"Show on drawing ({len(q['locations'])} location"
+                                 f"{'s' if len(q['locations']) != 1 else ''})", relief="groove",
+                      command=lambda: show_cb(q)).pack(anchor="w", pady=4)
+
+        self.choice = tk.StringVar(value=prev_in.get("choice") or "")
+        for value, label in q.get("choices", []):
+            tk.Radiobutton(self, text=label, variable=self.choice, value=value, justify="left",
+                           wraplength=600).pack(anchor="w")
+        self.checks = {}
+        if q["kind"] == "checklist":
+            box = tk.Frame(self)
+            box.pack(fill="x")
+            for it in q["items"]:
+                var = tk.BooleanVar(value=it["tag"] in (prev_in.get("checks") or []))
+                self.checks[it["tag"]] = var
+                tk.Checkbutton(box, variable=var, anchor="w", justify="left",
+                               text=f"{it['tag']} - {it['description']} (x{it['quantity']}, {it['location']})"
+                               ).pack(anchor="w")
+        self.fields = {}
+        prev_fields = prev_in.get("fields") or {}
+        for fld in q.get("fields", []):
+            row = tk.Frame(self)
+            row.pack(fill="x", pady=2)
+            tk.Label(row, text=fld["label"], width=48, anchor="w", wraplength=330, justify="left").pack(side="left")
+            var = tk.StringVar(value=prev_fields.get(fld["key"], fld["default"]))
+            tk.Entry(row, textvariable=var, width=30).pack(side="left")
+            self.fields[fld["key"]] = var
+        tk.Label(self, text="Comment (optional, saved on the BOM):").pack(anchor="w", pady=(8, 0))
+        self.comment = tk.StringVar(value=prev_in.get("comment", ""))
+        tk.Entry(self, textvariable=self.comment, width=80).pack(anchor="w")
+        row = tk.Frame(self)
+        row.pack(fill="x", pady=(12, 0))
+        tk.Button(row, text="Cancel", command=self.destroy).pack(side="right", padx=4)
+        tk.Button(row, text="Apply answer", bg="#4CAF50", fg="white", command=self.ok).pack(side="right")
+        self.grab_set()
+        self.transient(parent)
+
+    def ok(self):
+        if self.q.get("choices") and not self.choice.get():
+            messagebox.showinfo("Answer", "Please pick one of the options.", parent=self)
+            return
+        self.result = {"choice": self.choice.get() or None,
+                       "checks": [t for t, v in self.checks.items() if v.get()],
+                       "fields": {k: v.get() for k, v in self.fields.items()},
+                       "comment": self.comment.get()}
+        self.destroy()
+
+
 class ItemDialog(simpledialog.Dialog):
     def __init__(self, parent, title: str, item: dict):
         self.item = item
@@ -169,7 +234,7 @@ class ReviewWindow(tk.Toplevel):
         super().__init__(parent)
         self.jm, self.job_number, self.on_saved = jm, job_number, on_saved
         self.title(f"Review BOM - Job #{job_number}")
-        self.geometry("1000x680")
+        self.geometry("1000x760")
         review = load_review(jm, job_number)
         if not review:
             messagebox.showinfo("Review", "Generate the BOM first.", parent=parent)
@@ -179,6 +244,9 @@ class ReviewWindow(tk.Toplevel):
         self.result = review["result"]
         self.materials = [dict(m) for m in review["materials"]]
         self.clarifications: list[str] = list(review.get("clarifications", []))
+        self.answers: dict = dict(review.get("answers", {}))
+        ensure_uids(self.materials)
+        self.questions = build_questions(self.result.get("flags", []), self.materials)
         
         self._build()
         self._fill()
@@ -191,7 +259,7 @@ class ReviewWindow(tk.Toplevel):
                      fg="gray", wraplength=960, justify="left").pack(anchor="w", padx=8, pady=(8, 0))
 
         cols = ("n", "tag", "desc", "qty", "loc", "basis")
-        self.tree = ttk.Treeview(self, columns=cols, show="headings", height=14, selectmode="browse")
+        self.tree = ttk.Treeview(self, columns=cols, show="headings", height=10, selectmode="browse")
         for c, label, w in (("n", "#", 35), ("tag", "Tag", 90), ("desc", "Description", 250),
                             ("qty", "Qty", 45), ("loc", "Location (page / grid)", 220),
                             ("basis", "Why it is on the BOM", 330)):
@@ -206,14 +274,14 @@ class ReviewWindow(tk.Toplevel):
                           ("Remove", self.remove_item), ("Add item", self.add_item)):
             tk.Button(bar, text=text, command=cmd, relief="groove").pack(side="left", padx=(0, 6))
 
-        tk.Label(self, text="Questions and flags (double-click one to answer it):",
-                 font=("Arial", 10, "bold")).pack(anchor="w", padx=8, pady=(10, 2))
-        self.flags = tk.Listbox(self, height=6)
+        self.q_title = tk.Label(self, font=("Arial", 10, "bold"))
+        self.q_title.pack(anchor="w", padx=8, pady=(10, 2))
+        self.flags = tk.Listbox(self, height=7)
         self.flags.pack(fill="x", padx=8)
-        self.flag_items = [f for f in self.result.get("flags", []) if f.get("message")]
-        for f in self.flag_items:
-            self.flags.insert("end", f["message"][:200])
         self.flags.bind("<Double-1>", lambda _e: self.answer_flag())
+        tk.Button(self, text="Answer selected question", command=self.answer_flag, relief="groove"
+                  ).pack(anchor="w", padx=8, pady=3)
+        self._fill_questions()
 
         tk.Label(self, text="Clarifications (saved on the BOM):", font=("Arial", 10, "bold")
                  ).pack(anchor="w", padx=8, pady=(10, 2))
@@ -273,14 +341,42 @@ class ReviewWindow(tk.Toplevel):
             self.clarifications.append(text.strip())
             self.notes.insert("end", text.strip())
 
+    def _fill_questions(self):
+        sel = self.flags.curselection()
+        self.flags.delete(0, "end")
+        for q in self.questions:
+            done = q["id"] in self.answers
+            self.flags.insert("end", f"{'[answered]' if done else '[OPEN]    '}  {q['title']}")
+            self.flags.itemconfig("end", fg="#0a7d2c" if done else ("#b36b00" if q["severity"] != "info" else "#555"))
+        open_n = sum(1 for q in self.questions if q["id"] not in self.answers)
+        self.q_title.config(text=f"Questions the scan couldn't settle ({open_n} open of {len(self.questions)}) "
+                                 "- double-click one to read it and answer:")
+        if sel:
+            self.flags.selection_set(sel[0])
+
+    def _show_question(self, q: dict):
+        locs = q.get("locations") or []
+        try:
+            LocationViewer(self, self.pid_file, q["title"], locs, None)
+        except Exception as exc:
+            messagebox.showerror("Location", f"Could not draw the P&ID: {exc}", parent=self)
+
     def answer_flag(self):
         sel = self.flags.curselection()
         if not sel:
+            messagebox.showinfo("Question", "Select a question first.", parent=self)
             return
-        flag = self.flag_items[sel[0]]
-        answer = simpledialog.askstring("Answer", flag["message"][:300], parent=self)
-        if answer:
-            self.add_note(f"Q: {flag['message'][:160]} -> A: {answer.strip()}")
+        q = self.questions[sel[0]]
+        previous = self.answers.get(q["id"])
+        dlg = QuestionDialog(self, q, previous, self._show_question)
+        self.wait_window(dlg)
+        if not dlg.result:
+            return
+        if previous:
+            undo_answer(self.materials, previous)
+        self.answers[q["id"]] = apply_answer(self.materials, q, dlg.result)
+        self._fill()
+        self._fill_questions()
 
     def show_location(self):
         i = self._selected()
@@ -299,7 +395,12 @@ class ReviewWindow(tk.Toplevel):
 
     def save(self):
         try:
-            save_review(self.jm, self.job_number, self.materials, self.clarifications)
+            open_n = sum(1 for q in self.questions if q["id"] not in self.answers)
+            if open_n and not messagebox.askyesno(
+                    "Open questions", f"{open_n} question(s) are still unanswered and will be listed as "
+                    "'needs review' on the BOM. Save anyway?", parent=self):
+                return
+            save_review(self.jm, self.job_number, self.materials, self.clarifications, self.answers)
         except Exception as exc:
             messagebox.showerror("Save failed", str(exc), parent=self)
             return

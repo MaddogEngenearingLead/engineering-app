@@ -219,11 +219,7 @@ def select_items(pdf, by_page, demo, new, *, legend, abbreviations, symbol_legen
             m = re.match(r"\d+", o["number"] or "")
             g["width"] = max(g["width"], len(m.group(0)) if m else 0)
 
-    materials, tag_infos = [], []
-    for key, g in groups.items():
-        prefix, number = g["prefix"], g["number"]
-        tag = _display(prefix, number, g["width"])
-        locs = _dedupe(g["occ"])
+    def _describe(prefix, number, tag):
         d = describe_tag(tag if number else f"{prefix}-0", legend)
         description, source, conf = d["description"], d["source"], d["confidence"]
         if source != "legend":
@@ -233,6 +229,20 @@ def select_items(pdf, by_page, demo, new, *, legend, abbreviations, symbol_legen
                 description, source, conf = symbol_legend[prefix], "legend_symbol", 0.85
             elif source == "instrument_letters" and "Unclassified" in description:
                 description, source, conf = f"Instrument {prefix}", "default", 0.3
+        return d, description, source, conf
+
+    def _entry(key, locs):
+        tag = _display(key[0], key[1], 0)
+        return {"tag": tag, "description": _describe(key[0], key[1], tag)[1], "quantity": len(_dedupe(locs)),
+                "pages": sorted({l["page"] for l in locs}), "location": location_text(locs),
+                "locations": _dedupe(locs), "type": infer_equipment_type(key[0])}
+
+    materials, tag_infos = [], []
+    for key, g in groups.items():
+        prefix, number = g["prefix"], g["number"]
+        tag = _display(prefix, number, g["width"])
+        locs = _dedupe(g["occ"])
+        d, description, source, conf = _describe(prefix, number, tag)
         etype = infer_equipment_type(prefix)
         qty = 1 if number else len(locs)
         materials.append({
@@ -272,7 +282,8 @@ def select_items(pdf, by_page, demo, new, *, legend, abbreviations, symbol_legen
     for n in notes:
         ctx = _note_context(n, scans[n["page"]]["occurrences"], page_words[n["page"]], symbol_legend,
                             scope_text or "", describe_tag, legend)
-        flags.append({"type": "markup_note", "severity": "review", "page": n["page"],
+        flags.append({"type": "markup_note", "severity": "review", "page": n["page"], "text": n["text"],
+                      "x": n["x"], "y": n["y"], "grid": n.get("grid", ""),
                       "location": location_text([{**n, "page": n["page"]}]), "context": ctx,
                       "message": f"Markup note ({location_text([{**n, 'page': n['page']}])}): {n['text']}"
                                  + (f" - {ctx}" if ctx else "")})
@@ -292,7 +303,8 @@ def select_items(pdf, by_page, demo, new, *, legend, abbreviations, symbol_legen
         on_drawing = sum(drawing_by_code.get(c, 0) for c in codes) if codes else 0
         if on_drawing:
             if si.get("explicit") and on_drawing != si["quantity"]:
-                flags.append({"type": "count_mismatch", "severity": "review",
+                flags.append({"type": "count_mismatch", "severity": "review", "item": name,
+                              "scope_qty": si["quantity"], "drawing_qty": on_drawing, "codes": sorted(codes),
                               "message": f"Scope asks for {si['quantity']} x {name}; the drawing shows {on_drawing}. "
                                          "Confirm which is right."})
             continue
@@ -327,6 +339,7 @@ def select_items(pdf, by_page, demo, new, *, legend, abbreviations, symbol_legen
                                  + ", ".join(unrecognised[:10]) + "."})
     for key, tag in existing_named.items():
         flags.append({"type": "named_in_scope_but_existing", "severity": "review", "tag": tag,
+                      "items": [_entry(key, existing[key])],
                       "location": location_text(existing[key]),
                       "message": f"{tag} is named in the scope but drawn as existing (grey). Is work required on it?"})
 
@@ -337,11 +350,13 @@ def select_items(pdf, by_page, demo, new, *, legend, abbreviations, symbol_legen
     future_items = [{"tag": _display(k[0], k[1], 0), "location": location_text(v), "quantity": len(v)}
                     for k, v in future.items()]
     if excluded:
-        flags.append({"type": "unchanged_items_excluded", "severity": "info", "items": excluded,
+        flags.append({"type": "unchanged_items_excluded", "severity": "info",
+                      "items": [_entry(k, v) for k, v in existing.items()],
                       "message": f"{len(excluded)} existing item type(s) left out of the BOM: "
                                  + ", ".join(e["tag"] for e in excluded[:15]) + "."})
     if future_items:
-        flags.append({"type": "future_items_excluded", "severity": "info", "items": future_items,
+        flags.append({"type": "future_items_excluded", "severity": "info",
+                      "items": [_entry(k, v) for k, v in future.items()],
                       "message": f"{len(future_items)} item type(s) inside blue 'future work' clouds left out: "
                                  + ", ".join(e["tag"] for e in future_items[:15]) + "."})
 
