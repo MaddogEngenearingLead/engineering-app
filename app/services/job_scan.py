@@ -49,22 +49,30 @@ def load_review(jm: JobManager, job_number: str) -> dict | None:
 
 
 def save_review(jm: JobManager, job_number: str, materials: list[dict],
-                clarifications: list[str]) -> dict:
-    """Store the user's edits and re-export the PDF/JSON/CSV BOM."""
+                clarifications: list[str], answers: dict | None = None) -> dict:
+    """Store the user's edits and answers and re-export the PDF/JSON/CSV BOM.
+
+    Answered questions are listed as resolved on the BOM and dropped from its
+    "needs review" list; unanswered ones stay there.
+    """
     from app.services.bom_export import export_all
+    from app.services.review_questions import build_questions, record_lines
 
     review = load_review(jm, job_number)
     if not review:
         raise ValueError("Run the BOM scan first.")
+    answers = review.get("answers", {}) if answers is None else answers
     for i, m in enumerate(materials, 1):
         m["item_number"] = i
     result = review["result"]
     job_dir, _, _ = jm.get_job_dirs(job_number)
-    notes = [f["message"] for f in result.get("flags", []) if f.get("severity") in ("warning", "review")]
+    questions = build_questions(result.get("flags", []), materials)
+    notes = [q["message"] for q in questions
+             if q["severity"] in ("warning", "review") and q["id"] not in answers and q["message"]]
     paths = export_all(f"JOB-{job_number}", Path(review["pid_file"]).name, materials,
                        result.get("scope_text", ""), notes, result.get("detected_assets", []),
-                       str(job_dir / "bom_exports"), clarifications)
-    review.update(materials=materials, clarifications=clarifications)
+                       str(job_dir / "bom_exports"), list(clarifications) + record_lines(answers))
+    review.update(materials=materials, clarifications=clarifications, answers=answers)
     _review_path(jm, job_number).write_text(json.dumps(review, indent=2, default=str))
     _store(jm, job_number, {"bom_status": "completed", "bom_item_count": len(materials),
                             "bom_generated_at": datetime.now().isoformat(),
@@ -128,6 +136,7 @@ def run_job_scan(jm: JobManager, job_number: str, demo_pages: list[int] | None =
             "result": result,
             "materials": result.get("materials") or [],
             "clarifications": [],
+            "answers": {},
         }, indent=2, default=str))
 
         _store(jm, job_number, {

@@ -175,3 +175,36 @@ def test_scope_only_rows_explain_where_they_come_from(pid, tmp_path):
     row = next(m for m in r["materials"] if m["origin"] == "scope")
     assert "no matching marked item" not in row["basis"] and "flange" in row["basis"].lower()
     assert row["location"]
+
+
+def test_answers_change_bom_and_resolve_question(pid, tmp_path):
+    import json
+    from app.job_manager import JobManager
+    from app.services.job_scan import load_review, run_job_scan, save_review
+    from app.services.review_questions import apply_answer, build_questions, ensure_uids, undo_answer
+
+    scope = tmp_path / "scope.txt"
+    scope.write_text("Install PCV-101 and the VFD-1 drive.")
+    jm = JobManager(str(tmp_path / "uploads"))
+    jm.create_job("T-8")
+    jm.add_job_files("T-8", str(pid), str(scope))
+    run_job_scan(jm, "T-8")
+    review = load_review(jm, "T-8")
+    mats = review["materials"]
+    ensure_uids(mats)
+    before = [(m["tag_id"], m["quantity"]) for m in mats]
+    qs = build_questions(review["result"]["flags"], mats)
+    q = {"id": "qx", "flag_type": "markup_note", "kind": "choice", "title": "t", "question": "q",
+         "why": "w", "severity": "review", "message": "m",
+         "locations": [{"page": 1, "x": 10, "y": 10, "grid": "A-1"}],
+         "choices": [("add", "")], "fields": []}
+    rec = apply_answer(mats, q, {"choice": "add", "fields": {"description": "Test valve", "qty": "3"},
+                                 "comment": "ok"})
+    assert any(m["description"] == "Test valve" and m["quantity"] == 3 for m in mats)
+    undo_answer(mats, rec)
+    assert [(m["tag_id"], m["quantity"]) for m in mats] == before
+    apply_answer(mats, q, {"choice": "add", "fields": {"description": "Test valve", "qty": "3"}})
+    paths = save_review(jm, "T-8", mats, [], {"qx": rec})
+    data = json.load(open(paths["bom_json"]))
+    assert any(m["description"] == "Test valve" for m in data["materials"])
+    assert load_review(jm, "T-8")["answers"]["qx"]["id"] == "qx"
