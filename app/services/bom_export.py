@@ -269,7 +269,7 @@ def export_bom_to_csv(
         return str(file_path)
 
     with open(file_path, "w", newline="") as f:
-        fieldnames = materials[0].keys()
+        fieldnames = list(dict.fromkeys(k for m in materials for k in m))
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(materials)
