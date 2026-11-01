@@ -125,13 +125,19 @@ def apply_update(downloaded: Path) -> None:
             "  ping -n 2 127.0.0.1 >nul\r\n"
             "  goto wait\r\n"
             ")\r\n"
+            "ping -n 4 127.0.0.1 >nul\r\n"
+            # the old process's temp folder is gone; make the new exe unpack its own
+            "set _MEIPASS2=\r\n"
+            "set PYINSTALLER_RESET_ENVIRONMENT=1\r\n"
             f'start "" "{current}"\r\n'
             '(goto) 2>nul & del "%~f0"\r\n'
         )
+        env = {k: v for k, v in os.environ.items() if not k.startswith(("_MEI", "_PYI"))}
+        env["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
         subprocess.Popen(
             ["cmd", "/c", str(script)],
             creationflags=0x08000000 | 0x00000008,  # no window, detached
-            close_fds=True,
+            close_fds=True, env=env,
         )
     elif sys.platform == "darwin":
         # .../JobManager.app/Contents/MacOS/JobManager -> .../JobManager.app
@@ -151,6 +157,7 @@ def apply_update(downloaded: Path) -> None:
             f'rm -rf "{downloaded.parent}"\n'
         )
         script.chmod(0o755)
-        subprocess.Popen(["/bin/sh", str(script)], start_new_session=True, close_fds=True)
+        env = {k: v for k, v in os.environ.items() if not k.startswith(("_MEI", "_PYI"))}
+        subprocess.Popen(["/bin/sh", str(script)], start_new_session=True, close_fds=True, env=env)
     else:
         raise RuntimeError("Self-update is not supported on this platform.")
