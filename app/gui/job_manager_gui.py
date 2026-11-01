@@ -20,6 +20,7 @@ from tkinter import messagebox, ttk
 from tkinterdnd2 import DND_FILES, TkinterDnD
 
 from app.job_manager import JobManager
+from app.services.accounts import SECURITY_QUESTIONS, AccountError, AccountStore
 from app.services.job_scan import run_job_scan
 from app.services.updater import (
     UpdateInfo, apply_update, can_self_update, check_for_update, download_update,
@@ -61,6 +62,8 @@ class JobManagerApp(TkinterDnD.Tk):
         self.geometry("640x500")
         self.configure(padx=20, pady=20)
         self.jobs = JobManager(get_upload_dir())
+        self.accounts = AccountStore(Path(get_upload_dir()).parent)
+        self.current_user: str | None = None
         self.running: set[str] = set()
         self.update_info: UpdateInfo | None = None
         self.updating = False
@@ -157,19 +160,34 @@ class JobManagerApp(TkinterDnD.Tk):
                   bg="#4CAF50", fg="white").pack(pady=15)
         tk.Button(self, text="Create Account", command=self.create_account,
                   relief="flat", fg="blue").pack()
+        tk.Button(self, text="Forgot password?", command=self.forgot_password,
+                  relief="flat", fg="blue").pack()
 
     def process_login(self):
-        # Backend authentication is still in development: only checks fields are filled.
-        if self.username_entry.get().strip() and self.password_entry.get():
-            self.show_dashboard()
-        else:
+        username = self.username_entry.get().strip()
+        password = self.password_entry.get()
+        if not username or not password:
             messagebox.showerror("Error", "Please enter both username and password")
+            return
+        if not self.accounts.has_accounts():
+            messagebox.showinfo("No accounts", "No accounts exist yet. Click 'Create Account' first.")
+            return
+        try:
+            self.current_user = self.accounts.authenticate(username, password)
+        except AccountError as exc:
+            messagebox.showerror("Login failed", str(exc))
+            return
+        self.show_dashboard()
 
     def create_account(self):
-        # TODO(auth): connect Create Account to backend signup endpoint when available
-        messagebox.showinfo("Create Account",
-                            "Account creation is not available yet. It will be enabled "
-                            "when the login backend is complete.")
+        AccountWindow(self)
+
+    def forgot_password(self):
+        ResetPasswordWindow(self, self.username_entry.get().strip())
+
+    def logout(self):
+        self.current_user = None
+        self.show_login_screen()
 
     # ------------------------------------------------------------------
     # Dashboard
@@ -177,7 +195,11 @@ class JobManagerApp(TkinterDnD.Tk):
 
     def show_dashboard(self):
         self.clear_screen()
-        tk.Label(self, text="Dashboard", font=("Arial", 18, "bold")).pack(pady=(0, 10))
+        header = tk.Frame(self)
+        header.pack(fill="x", pady=(0, 10))
+        tk.Label(header, text="Dashboard", font=("Arial", 18, "bold")).pack(side="left")
+        tk.Button(header, text="Log out", command=self.logout, relief="groove").pack(side="right")
+        tk.Label(header, text=f"{self.current_user or ''}  ", fg="gray").pack(side="right")
         tk.Button(self, text="+ Start a New Job", command=self.open_new_job_window,
                   width=20, bg="#2196F3", fg="white").pack(pady=10)
         tk.Label(self, text="Your Jobs (click a job to generate its BOM):",
@@ -263,6 +285,96 @@ class JobManagerApp(TkinterDnD.Tk):
 
     def open_new_job_window(self, job_number: str = "", files: dict | None = None):
         NewJobWindow(self, job_number=job_number, files=files)
+
+
+class AccountWindow(tk.Toplevel):
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.parent = parent
+        self.title("Create Account")
+        self.configure(padx=20, pady=20)
+        self.grab_set()
+        self.username = self._field("Username:")
+        self.password = self._field("Password (min 8 characters):", show="*")
+        self.confirm = self._field("Confirm password:", show="*")
+        tk.Label(self, text="Security question (used to reset your password):").pack(anchor="w", pady=(10, 0))
+        self.question = ttk.Combobox(self, values=SECURITY_QUESTIONS, state="readonly", width=45)
+        self.question.current(0)
+        self.question.pack(pady=5)
+        self.answer = self._field("Answer:")
+        tk.Button(self, text="Create Account", command=self.submit, width=20,
+                  bg="#4CAF50", fg="white").pack(pady=15)
+
+    def _field(self, label: str, show: str | None = None) -> tk.Entry:
+        tk.Label(self, text=label).pack(anchor="w")
+        entry = tk.Entry(self, width=48, show=show or "")
+        entry.pack(pady=3)
+        return entry
+
+    def submit(self):
+        if self.password.get() != self.confirm.get():
+            messagebox.showerror("Error", "Passwords do not match.", parent=self)
+            return
+        try:
+            self.parent.accounts.create_account(
+                self.username.get(), self.password.get(), self.question.get(), self.answer.get()
+            )
+        except AccountError as exc:
+            messagebox.showerror("Error", str(exc), parent=self)
+            return
+        messagebox.showinfo("Account created", "Account created. You can log in now.", parent=self)
+        self.destroy()
+
+
+class ResetPasswordWindow(tk.Toplevel):
+    def __init__(self, parent, username: str = ""):
+        super().__init__(parent)
+        self.parent = parent
+        self.title("Reset Password")
+        self.configure(padx=20, pady=20)
+        self.grab_set()
+        tk.Label(self, text="Username:").pack(anchor="w")
+        self.username = tk.Entry(self, width=48)
+        self.username.pack(pady=3)
+        self.username.insert(0, username)
+        tk.Button(self, text="Next", command=self.load_question).pack(pady=5)
+        self.step2 = tk.Frame(self)
+        self.question_label = tk.Label(self.step2, wraplength=380, justify="left")
+        self.question_label.pack(anchor="w")
+        self.answer = self._entry("Answer:")
+        self.new_password = self._entry("New password (min 8 characters):", show="*")
+        self.confirm = self._entry("Confirm new password:", show="*")
+        tk.Button(self.step2, text="Reset Password", command=self.submit, width=20,
+                  bg="#4CAF50", fg="white").pack(pady=10)
+
+    def _entry(self, label: str, show: str | None = None) -> tk.Entry:
+        tk.Label(self.step2, text=label).pack(anchor="w")
+        entry = tk.Entry(self.step2, width=48, show=show or "")
+        entry.pack(pady=3)
+        return entry
+
+    def load_question(self):
+        try:
+            question = self.parent.accounts.get_question(self.username.get())
+        except AccountError as exc:
+            messagebox.showerror("Error", str(exc), parent=self)
+            return
+        self.question_label.config(text=question)
+        self.step2.pack(fill="x")
+
+    def submit(self):
+        if self.new_password.get() != self.confirm.get():
+            messagebox.showerror("Error", "Passwords do not match.", parent=self)
+            return
+        try:
+            self.parent.accounts.reset_password(
+                self.username.get(), self.answer.get(), self.new_password.get()
+            )
+        except AccountError as exc:
+            messagebox.showerror("Error", str(exc), parent=self)
+            return
+        messagebox.showinfo("Password reset", "Password changed. You can log in now.", parent=self)
+        self.destroy()
 
 
 class NewJobWindow(tk.Toplevel):
