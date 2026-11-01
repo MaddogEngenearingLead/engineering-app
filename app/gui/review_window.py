@@ -31,6 +31,18 @@ def render_location(pdf_path: str, page: int, x: float, y: float, half: int = 26
         return buf.getvalue()
 
 
+def render_page(pdf_path: str, page: int, width: int = 1100) -> bytes:
+    """PNG bytes of a whole drawing page, scaled to fit the screen."""
+    import pdfplumber
+
+    with pdfplumber.open(pdf_path) as pdf:
+        pg = pdf.pages[page - 1]
+        img = pg.to_image(resolution=72 * width / float(pg.width)).original.convert("RGB")
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        return buf.getvalue()
+
+
 class ItemDialog(simpledialog.Dialog):
     def __init__(self, parent, title: str, item: dict):
         self.item = item
@@ -185,22 +197,26 @@ class ReviewWindow(tk.Toplevel):
         i = self._selected()
         if i is None:
             return
-        locs = self.materials[i].get("locations") or []
-        if not locs:
-            messagebox.showinfo("Location", "This item is not drawn on the P&ID "
-                                "(it comes from the scope of work), so it has no location.", parent=self)
-            return
-        k = self._cycle.get(i, 0) % len(locs)
-        self._cycle[i] = k + 1
-        loc = locs[k]
+        m = self.materials[i]
+        locs = m.get("locations") or []
         try:
-            png = render_location(self.pid_file, loc["page"], loc["x"], loc["y"])
+            if locs:
+                k = self._cycle.get(i, 0) % len(locs)
+                self._cycle[i] = k + 1
+                loc = locs[k]
+                png = render_location(self.pid_file, loc["page"], loc["x"], loc["y"])
+                heading = f"page {loc['page']} {loc.get('grid', '')}  ({k + 1} of {len(locs)})"
+            elif m.get("page"):
+                png = render_page(self.pid_file, int(m["page"]))
+                heading = f"page {m['page']} (whole page - this item has no exact spot)"
+            else:
+                messagebox.showinfo("Location", "No drawing location is known for this item.", parent=self)
+                return
         except Exception as exc:
             messagebox.showerror("Location", f"Could not draw the P&ID: {exc}", parent=self)
             return
         win = tk.Toplevel(self)
-        win.title(f"{self.materials[i].get('tag_id') or self.materials[i].get('description')} - "
-                  f"page {loc['page']} {loc.get('grid', '')}  ({k + 1} of {len(locs)})")
+        win.title(f"{m.get('tag_id') if m.get('tag_id') not in (None, '-') else m.get('description')} - {heading}")
         win.photo = tk.PhotoImage(data=base64.b64encode(png))
         tk.Label(win, image=win.photo).pack()
         tk.Label(win, text="Click 'Show on drawing' again for the next occurrence.", fg="gray").pack()

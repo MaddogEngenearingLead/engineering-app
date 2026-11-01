@@ -168,3 +168,10 @@ def test_every_item_has_location_and_review_roundtrip(pid, tmp_path):
         rows = list(csv.DictReader(f))
     assert len(rows) == len(mats) and "location" in rows[0]
     assert json.load(open(paths["bom_json"]))["clarifications"] == ["Q: flange size? -> A: 4in"]
+
+
+def test_scope_only_rows_explain_where_they_come_from(pid, tmp_path):
+    r = scan(pid, tmp_path, "(DRG. M-1) Installation: Test Area\nInstall a new 4in flange at tank TK-1.")
+    row = next(m for m in r["materials"] if m["origin"] == "scope")
+    assert "no matching marked item" not in row["basis"] and "flange" in row["basis"].lower()
+    assert row["location"]
