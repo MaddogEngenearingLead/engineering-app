@@ -10,16 +10,48 @@ from app.services.pid_labels import LABEL_CODES, LABEL_NAMES, scan_page_labels
 from app.services.pid_markup import _pipe_labels, _segments, markup_items
 from app.services.pid_scope import scope_items
 
-# scope item name -> drawing codes that satisfy it
+from app.services.vocabulary import VOCAB
+
+# scope item name -> drawing codes that satisfy it (common synonyms; extend via vocabulary.json).
+# Anything else is matched by name against the legend, symbol legend and code names.
 SCOPE_ALIASES = {
     "Pressure Gauge": {"PG", "PI"},
     "Flow Switch": {"FS"},
     "Manual Air Vent": {"MAV"},
     "Low Point Drain": {"LPD"},
-    "Pneumatic Operated Valve w/ Operator": {"POV"},
     "Air Eliminator": {"AE"},
     "Strainer": {"S"},
 }
+SCOPE_ALIASES.update(VOCAB["scope_aliases"])
+
+
+def _name_words(text: str) -> frozenset:
+    return frozenset(re.sub(r"(es|s)$", "", w) for w in re.findall(r"[a-z]{3,}", (text or "").lower()))
+
+
+def _codes_for_scope_name(name: str, code_names: dict) -> set:
+    """Drawing codes that satisfy a scope item: known synonyms, else codes whose name equals the
+    scope wording (or is fully contained in a multi-word scope name)."""
+    if name in SCOPE_ALIASES:
+        return set(SCOPE_ALIASES[name])
+    nw = _name_words(name)
+    return {c for c, d in code_names.items()
+            if (dw := _name_words(d)) and (dw == nw or (len(dw) >= 2 and dw <= nw))}
+
+
+_DASHED_TAG = re.compile(r"\b([A-Z]{2,6})\s?-\s?(\d{1,4}[A-Z]?)\b")
+
+
+def _learned_prefixes(by_page: dict, pages: list, scope_text: str, exclude: set) -> set:
+    """Letter prefixes this drawing set uses for tags: repeated across several numbers, or written as
+    a tag in the scope. Lets unfamiliar equipment classes be recognised without a built-in list."""
+    numbers: dict = defaultdict(set)
+    for p in pages:
+        for pre, num in _DASHED_TAG.findall((by_page.get(p) or {}).get("text", "")):
+            numbers[pre].add(num)
+    learned = {pre for pre, nums in numbers.items() if len(nums) >= 2}
+    learned |= {pre for pre, _ in _DASHED_TAG.findall((scope_text or "").upper())}
+    return learned - exclude
 
 
 def _key(prefix: str, number: str):
@@ -214,7 +246,9 @@ def select_items(pdf, by_page, demo, new, *, legend, abbreviations, symbol_legen
     not_tags = {"SCH", "NPS", "DWG", "REV", "PSI", "GPM", "ASME", "ANSI", "API", "NFPA", "AWS", "ASTM", "SHEET",
                 "NOTE", "ISO", "TYP", "MAX", "MIN", "DIA"}
     symbol_codes = {k for k in symbol_legend if 2 <= len(k) <= 5 and k.isalpha()}
-    allowed = (VALID_PREFIXES | legend_prefixes(abbreviations) | symbol_codes) - DENYLIST_PREFIXES
+    learned = _learned_prefixes(by_page, demo + new, scope_text, not_tags | DENYLIST_PREFIXES)
+    allowed = (VALID_PREFIXES | legend_prefixes(abbreviations) | symbol_codes | learned) - DENYLIST_PREFIXES
+    code_names = {**LABEL_NAMES, **{k.upper(): v for k, v in (abbreviations or {}).items()}, **symbol_legend}
     label_codes = LABEL_CODES | symbol_codes
     decode_ok = lambda pre: (len(pre) >= 2 and pre not in not_tags and pre[0] in first
                              and all(c in succ for c in pre[1:]))
@@ -358,7 +392,7 @@ def select_items(pdf, by_page, demo, new, *, legend, abbreviations, symbol_legen
     page_title = {p: (page_text[p].split("INSTALLATION DRAWING", 1) + [""])[1][:80] for p in new}
     for si in scope_items(scope_text or ""):
         name = re.sub(r'^[\d\-/"½¼¾# ]+', "", si["description"]).strip()
-        codes = SCOPE_ALIASES.get(name)
+        codes = _codes_for_scope_name(name, code_names)
         on_drawing = sum(drawing_by_code.get(c, 0) for c in codes) if codes else 0
         if on_drawing:
             if si.get("explicit") and on_drawing != si["quantity"]:
