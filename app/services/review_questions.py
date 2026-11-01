@@ -60,6 +60,17 @@ def _question(i: int, f: dict, materials: list[dict]) -> dict | None:
                 "choices": [("add", f"Yes - add {f['tag']} to the BOM"),
                             (NO_CHANGE, "No - leave it off the BOM")]}
 
+    if t == "new_work_not_in_scope":
+        return {**base, "kind": "checklist", "items": f["items"],
+                "locations": [l for it in f["items"] for l in it["locations"]],
+                "title": f"New-work items not in the scope ({len(f['items'])})",
+                "question": "These items are marked as new work on the drawing, but the scope of work never "
+                            "mentions them (by tag or by item type), so they were left off the BOM. Tick any "
+                            "that are actually needed.",
+                "why": "The BOM only lists what the scope of work calls for. Ticked items are added with the "
+                       "quantity shown.",
+                "choices": []}
+
     if t in ("unchanged_items_excluded", "future_items_excluded"):
         future = t == "future_items_excluded"
         what = "inside blue 'future work' clouds" if future else "drawn as existing (grey)"

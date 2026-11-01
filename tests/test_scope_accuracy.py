@@ -90,7 +90,7 @@ def test_legend_table_and_key_sections():
 
 
 def test_scan_uses_legend_and_scope(pid, tmp_path):
-    scope = "Install PCV-101 and the VFD-1 drive. Replace tank TK-1. Add a new 4in flange."
+    scope = "Install PCV-101 and the VFD-1 drive. Replace tank TK-1. Add a new 4in flange. Replace pump JFSP-2B. Add alarm PAH-5."
     r = scan(pid, tmp_path, scope)
     assert r["status"] == "completed"
     assert r["legend"]["page"] == 1 and r["legend"]["entries_found"] >= 4
@@ -237,3 +237,19 @@ def test_rescan_keeps_answers(pid, tmp_path):
     again = load_review(jm, "T-7")
     assert q["id"] in again["answers"]
     assert len(again["materials"]) == len(mats)
+
+
+def test_new_work_not_in_scope_is_left_off_and_asked(pid, tmp_path):
+    from app.services.review_questions import apply_answer, build_questions
+
+    full = scan(pid, tmp_path, "Install PCV-101 and the VFD-1 drive. Replace tank TK-1. Replace pump JFSP-2B. Add alarm PAH-5.")
+    r = scan(pid, tmp_path, "Install PCV-101 only.")
+    tags = {m["tag_id"] for m in r["materials"]}
+    assert "PCV-101" in tags and len(r["materials"]) < len(full["materials"])
+    flag = next(f for f in r["flags"] if f["type"] == "new_work_not_in_scope")
+    left_off = {i["tag"] for i in flag["items"]}
+    assert left_off and not left_off & tags
+    q = next(q for q in build_questions(r["flags"], r["materials"]) if q["flag_type"] == "new_work_not_in_scope")
+    mats = r["materials"]
+    apply_answer(mats, q, {"checks": [flag["items"][0]["tag"]], "fields": {}})
+    assert flag["items"][0]["tag"] in {m["tag_id"] for m in mats}
