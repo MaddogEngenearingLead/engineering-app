@@ -21,6 +21,10 @@ from tkinterdnd2 import DND_FILES, TkinterDnD
 
 from app.job_manager import JobManager
 from app.services.job_scan import run_job_scan
+from app.services.updater import (
+    UpdateInfo, apply_update, can_self_update, check_for_update, download_update,
+)
+from app.version import __version__
 
 
 def get_upload_dir() -> str:
@@ -53,16 +57,91 @@ def parse_dropped_files(tk_root, data: str) -> list[str]:
 class JobManagerApp(TkinterDnD.Tk):
     def __init__(self):
         super().__init__()
-        self.title("Job Manager App")
+        self.title(f"Job Manager App v{__version__}")
         self.geometry("640x500")
         self.configure(padx=20, pady=20)
         self.jobs = JobManager(get_upload_dir())
         self.running: set[str] = set()
+        self.update_info: UpdateInfo | None = None
+        self.updating = False
         self.show_login_screen()
+        threading.Thread(target=self._check_updates, daemon=True).start()
 
     def clear_screen(self):
         for widget in self.winfo_children():
             widget.destroy()
+        self._render_update_banner()
+
+    # ------------------------------------------------------------------
+    # Updates
+    # ------------------------------------------------------------------
+
+    def _check_updates(self):
+        info = check_for_update()
+        if info:
+            self.after(0, lambda: self._on_update_found(info))
+
+    def _on_update_found(self, info: UpdateInfo):
+        self.update_info = info
+        self.refresh_screen()
+
+    def refresh_screen(self):
+        # Re-render the current screen so the banner appears; skip the login form
+        # to avoid wiping what the user is typing.
+        if hasattr(self, "username_entry") and self.username_entry.winfo_exists():
+            self._render_update_banner()
+        else:
+            self.show_dashboard()
+
+    def _render_update_banner(self):
+        for widget in self.winfo_children():
+            if getattr(widget, "is_update_banner", False):
+                widget.destroy()
+        if not self.update_info:
+            return
+        banner = tk.Frame(self, bg="#fff3cd", padx=8, pady=6)
+        banner.is_update_banner = True
+        text = f"Update available: v{self.update_info.version} (you have v{__version__})"
+        tk.Label(banner, text=text, bg="#fff3cd").pack(side="left")
+        if self.updating:
+            tk.Label(banner, text="Downloading...", bg="#fff3cd", fg="#b36b00").pack(side="right")
+        elif can_self_update():
+            tk.Button(banner, text="Update now", command=self.start_update,
+                      relief="groove").pack(side="right")
+        banner.pack(side="top", fill="x", pady=(0, 10), before=self._first_non_banner())
+
+    def _first_non_banner(self):
+        for widget in self.pack_slaves():
+            if not getattr(widget, "is_update_banner", False):
+                return widget
+        return None
+
+    def start_update(self):
+        if self.updating or not self.update_info:
+            return
+        if self.running and not messagebox.askyesno(
+            "Scan in progress", "A BOM scan is running and will be cancelled. Update anyway?"
+        ):
+            return
+        self.updating = True
+        self._render_update_banner()
+        info = self.update_info
+
+        def work():
+            try:
+                path = download_update(info)
+                apply_update(path)
+            except Exception as exc:
+                self.after(0, lambda: self._update_failed(str(exc)))
+                return
+            self.after(0, self.destroy)
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _update_failed(self, message: str):
+        self.updating = False
+        self._render_update_banner()
+        messagebox.showerror("Update failed", f"Could not install the update: {message}")
 
     def show_login_screen(self):
         self.clear_screen()

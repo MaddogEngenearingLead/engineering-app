@@ -16,7 +16,21 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install tkinterdnd2==0.4.2 pyinstaller
+      - name: Stamp version and update token
+        shell: python
+        env:
+          UPDATE_TOKEN: ${{ secrets.UPDATE_TOKEN }}
+          REF_NAME: ${{ github.ref_name }}
+          REF_TYPE: ${{ github.ref_type }}
+        run: |
+          import os, pathlib
+          if os.environ["REF_TYPE"] == "tag":
+              version = os.environ["REF_NAME"].lstrip("v")
+              pathlib.Path("app/version.py").write_text(f'__version__ = "{version}"\n')
+          token = os.environ.get("UPDATE_TOKEN", "")
+          cfg = pathlib.Path("app/update_config.py")
+          cfg.write_text(cfg.read_text().replace('UPDATE_TOKEN = ""', f'UPDATE_TOKEN = "{token}"'))
+      - run: pip install tkinterdnd2==0.4.2 pyinstaller pdfplumber reportlab python-docx openpyxl httpx
       - run: python build_exe.py
       - name: Zip macOS app
         if: runner.os == 'macOS'
@@ -27,3 +41,19 @@ jobs:
           path: |
             dist/JobManager.exe
             dist/JobManager-macos.zip
+
+  release:
+    if: github.ref_type == 'tag'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: assets
+          merge-multiple: true
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${{ github.ref_name }}" assets/* --repo "${{ github.repository }}" --title "${{ github.ref_name }}" --generate-notes
