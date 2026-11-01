@@ -39,6 +39,12 @@ Download the latest release from the repository's **Releases** page:
 - **Windows:** `JobManager.exe` (single file, no Python needed).
 - **macOS:** `JobManager-macos.zip` (unzip and open `JobManager.app`).
 
+**Portable use (USB drive, Windows):** run `JobManager.exe` from the drive and jobs are saved in a
+`Jobs` folder next to it, so they travel with the program. On a normal hard drive, create an empty
+`Jobs` folder beside the exe to get the same behaviour; otherwise jobs live in
+`%LOCALAPPDATA%\EngineeringApp\uploads`. Existing jobs are not moved automatically; copy that
+folder's contents into `Jobs` if you want them on the drive.
+
 Updates: the app checks for a new version at launch and can update itself
 (**Check for updates**). Releases are built automatically by GitHub Actions
 (`.github/workflows/build-gui.yml`) when a `v*` tag is pushed. An optional Windows
