@@ -129,3 +129,7 @@ Nothing is tied to a particular drawing. Codes come from each drawing's own lege
 ```json
 {"codes": {"XYZ": "Custom Device"}, "ignore_prefixes": ["DWG"], "scope_aliases": {"Pneumatic Valve": ["POV"]}}
 ```
+
+## Optional AI review (Gemini)
+
+Click **AI settings** on the dashboard, tick the box, and paste a free Gemini key (aistudio.google.com/apikey). When on, each BOM scan also sends the drawing pages and scope to the AI, which finds the legend and suggests missing or unneeded items. Suggestions show up as questions and change nothing until you approve them. If the AI is unavailable the normal scan still completes. The provider is pluggable (`PROVIDERS` in `app/services/ai_review.py`). Settings are stored in `%LOCALAPPDATA%\EngineeringApp\ai_settings.json`.

@@ -72,6 +72,21 @@ def _question(i: int, f: dict, materials: list[dict]) -> dict | None:
                        "quantity shown.",
                 "choices": []}
 
+    if t in ("ai_missing_items", "ai_not_needed"):
+        missing = t == "ai_missing_items"
+        notes = "\n".join(f"- {it['tag']}: {it.get('reason') or 'no reason given'}" for it in f["items"])
+        return {**base, "kind": "checklist", "items": f["items"],
+                "locations": [l for it in f["items"] for l in it["locations"]],
+                "title": ("AI: items the scope needs but the BOM lacks" if missing
+                          else "AI: BOM items the scope may not need") + f" ({len(f['items'])})",
+                "question": ("The AI review thinks the scope of work calls for these items, which are not on the "
+                             "BOM. Tick the ones that are really needed to add them.\n\n" if missing else
+                             "The AI review thinks the scope of work does not call for these BOM items. Tick the "
+                             "ones to take off the BOM.\n\n") + notes,
+                "why": "The AI read the drawing and scope as a second opinion. It can be wrong, so nothing "
+                       "changes unless you tick it.",
+                "choices": []}
+
     if t in ("unchanged_items_excluded", "future_items_excluded"):
         future = t == "future_items_excluded"
         what = "inside blue 'future work' clouds" if future else "drawn as existing (grey)"
@@ -174,13 +189,21 @@ def apply_answer(materials: list[dict], q: dict, answer: dict) -> dict:
                       location=it["location"], locations=it["locations"], pages=",".join(map(str, it["pages"])),
                       basis=f"added after review: scope names {it['tag']} although it is drawn as existing"))
 
+    elif q["flag_type"] == "ai_not_needed":
+        ticked = set(answer.get("checks") or [])
+        undo["readd"] = [m for m in materials if m.get("tag_id") in ticked and m.get("origin") != "user"]
+        materials[:] = [m for m in materials if m not in undo["readd"]]
+        changes += [f"removed {m['description']}" for m in undo["readd"]]
+
     elif q["kind"] == "checklist":
         for it in q["items"]:
             if it["tag"] in (answer.get("checks") or []):
                 add(_new_item(q, tag_id=it["tag"], description=it["description"], type=it["type"],
                               quantity=it["quantity"], location=it["location"], locations=it["locations"],
                               pages=",".join(map(str, it["pages"])),
-                              basis="added after review: confirmed needed although excluded by the scan"))
+                              basis=("added after review: suggested by AI review and confirmed by user"
+                                     if q["flag_type"] == "ai_missing_items"
+                                     else "added after review: confirmed needed although excluded by the scan")))
 
     elif q["flag_type"] == "count_mismatch" and choice in ("scope", "drawing", "other"):
         flag_codes = set(q.get("codes") or [])
@@ -234,6 +257,7 @@ def undo_answer(materials: list[dict], record: dict) -> None:
     """Reverse what a previous answer did so it can be answered again."""
     undo = record.get("undo") or {}
     materials[:] = [m for m in materials if m.get("question_id") != undo.get("remove_question")]
+    materials.extend(undo.get("readd", []))
     by_uid = {m.get("uid"): m for m in materials}
     for r in undo.get("restore", []):
         m = by_uid.get(r["uid"])

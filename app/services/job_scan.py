@@ -93,6 +93,23 @@ def _replay_answers(result: dict, materials: list[dict], old: dict) -> dict:
     return kept
 
 
+def _run_ai(result: dict, pid_path: str, scope_text: str, materials: list[dict]) -> str:
+    """Optional AI second opinion; adds its findings as flags. Never fails the scan."""
+    from app.services import ai_review
+
+    if not ai_review.is_enabled():
+        return ""
+    try:
+        review = ai_review.review_with_ai(pid_path, scope_text, materials)
+    except Exception as exc:
+        logger.warning("AI review skipped: %s", exc)
+        result["ai_review"] = {"error": str(exc)}
+        return f"AI review was skipped: {exc}"
+    result.setdefault("flags", []).extend(review["flags"])
+    result["ai_review"] = {k: review[k] for k in ("provider", "model", "summary", "key_page")}
+    return f"AI review: {review['summary']}" if review["summary"] else "AI review done."
+
+
 def run_job_scan(jm: JobManager, job_number: str, demo_pages: list[int] | None = None,
                  new_work_pages: list[int] | None = None) -> dict:
     """Scan the job's P&ID against its scope and generate the BOM.
@@ -146,6 +163,7 @@ def run_job_scan(jm: JobManager, job_number: str, demo_pages: list[int] | None =
 
         previous = load_review(jm, job_number) or {}
         materials = result.get("materials") or []
+        ai_note = _run_ai(result, str(pid_path), scope_text, materials)
         answers = _replay_answers(result, materials, previous.get("answers") or {})
         _review_path(jm, job_number).write_text(json.dumps({
             "pid_file": str(pid_path.resolve()),
@@ -166,7 +184,8 @@ def run_job_scan(jm: JobManager, job_number: str, demo_pages: list[int] | None =
         })
         if answers:
             save_review(jm, job_number, materials, previous.get("clarifications", []), answers)
-        return {"status": "completed", "message": "BOM generated.", "result": result}
+        return {"status": "completed", "message": "BOM generated." + (f" {ai_note}" if ai_note else ""),
+                "ai_note": ai_note, "result": result}
     except Exception as exc:  # keep the GUI alive
         logger.exception("BOM scan failed for %s", job_number)
         try:
