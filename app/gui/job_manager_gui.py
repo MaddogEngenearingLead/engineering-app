@@ -203,7 +203,7 @@ class JobManagerApp(TkinterDnD.Tk):
         status = data.get("bom_status")
         if status == "completed":
             tk.Label(row, text="  BOM:", fg="gray").pack(side="left")
-            for key, label in (("bom_pdf", "PDF"), ("bom_csv", "CSV"), ("bom_json", "JSON")):
+            for key, label in (("bom_pdf", "PDF"),):
                 path = data.get(key)
                 if path and Path(path).is_file():
                     b = tk.Label(row, text=label, fg="#0a7d2c", cursor="hand2",
