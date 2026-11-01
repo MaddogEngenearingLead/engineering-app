@@ -28,12 +28,48 @@ from app.services.updater import (
 from app.version import __version__
 
 
+PORTABLE_DIR_NAME = "Jobs"
+
+
+def _on_removable_drive(path: Path) -> bool:
+    if sys.platform != "win32":
+        return False
+    try:
+        import ctypes
+        root = path.resolve().anchor
+        return ctypes.windll.kernel32.GetDriveTypeW(root) == 2  # DRIVE_REMOVABLE
+    except Exception:
+        return False
+
+
+def portable_upload_dir() -> Path | None:
+    """A `Jobs` folder next to the exe, used when the exe runs from a USB drive (or the
+    user created that folder). Jobs then travel with the program."""
+    if not getattr(sys, "frozen", False) or sys.platform == "darwin":
+        return None
+    exe_dir = Path(sys.executable).resolve().parent
+    jobs = exe_dir / PORTABLE_DIR_NAME
+    if jobs.is_dir() or _on_removable_drive(exe_dir):
+        try:
+            jobs.mkdir(exist_ok=True)
+            probe = jobs / ".write_test"
+            probe.write_text("x")
+            probe.unlink()
+            return jobs
+        except OSError:
+            return None
+    return None
+
+
 def get_upload_dir() -> str:
-    """UPLOAD_DIR env var, else a per-user folder when packaged as an .exe
-    (Program Files is not writable), else backend/uploads (API default)."""
+    """UPLOAD_DIR env var, else a `Jobs` folder beside the exe when run from a USB drive
+    (or when that folder exists), else a per-user folder when packaged, else backend/uploads."""
     env = os.environ.get("UPLOAD_DIR")
     if env:
         return env
+    portable = portable_upload_dir()
+    if portable:
+        return str(portable)
     if getattr(sys, "frozen", False):
         base = os.environ.get("LOCALAPPDATA") or str(Path.home())
         return str(Path(base) / "EngineeringApp" / "uploads")

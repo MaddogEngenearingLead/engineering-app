@@ -54,3 +54,22 @@ def test_download(monkeypatch, tmp_path):
     )
     info = updater.UpdateInfo("2.0.0", "", "JobManager.exe", "https://x/a")
     assert updater.download_update(info, tmp_path).read_bytes() == b"binary"
+
+
+def test_portable_jobs_folder_next_to_exe(tmp_path, monkeypatch):
+    import sys
+    from app.gui import job_manager_gui as g
+
+    exe = tmp_path / "JobManager.exe"
+    exe.write_text("x")
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "executable", str(exe))
+    monkeypatch.delenv("UPLOAD_DIR", raising=False)
+    monkeypatch.setattr(g.sys, "platform", "win32")
+    monkeypatch.setattr(g, "_on_removable_drive", lambda p: False)
+    assert "EngineeringApp" in g.get_upload_dir() or g.portable_upload_dir() is None
+    (tmp_path / "Jobs").mkdir()
+    assert g.get_upload_dir() == str(tmp_path / "Jobs")
+    (tmp_path / "Jobs").rmdir()
+    monkeypatch.setattr(g, "_on_removable_drive", lambda p: True)
+    assert g.get_upload_dir() == str(tmp_path / "Jobs") and (tmp_path / "Jobs").is_dir()
