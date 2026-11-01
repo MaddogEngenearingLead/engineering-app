@@ -52,10 +52,14 @@ def scope_items(scope_text: str) -> list[dict]:
     """Materials named in installation lines of the scope: [{description, quantity, source}]."""
     items: dict[str, dict] = {}
     in_install = False
+    section = {"drg": "", "title": ""}
     for raw in (scope_text or "").splitlines():
         line = raw.strip()
         if not line:
             continue
+        head = re.search(r"\(DRG\.?\s*([\w\-]+)\)(?:\s*\([^)]*\))*\s*(?:installation|demo)\w*\s*:\s*(.*)", line, re.I)
+        if head:
+            section = {"drg": head.group(1), "title": head.group(2).strip()}
         if re.search(r"\binstallation\b\s*:", line, re.I):
             in_install = True
         elif re.search(r"\bdemo\w*\s*:", line, re.I):
@@ -87,9 +91,12 @@ def scope_items(scope_text: str) -> list[dict]:
                     if rating:
                         parts.append(rating[-1])
                     desc = " ".join(parts + [name])
-                    item = items.setdefault(desc, {"description": desc, "quantity": 0, "sources": [], "explicit": False})
+                    item = items.setdefault(desc, {"description": desc, "quantity": 0, "sources": [], "explicit": False,
+                                                           "drg": section["drg"], "section": section["title"]})
                     item["quantity"] = max(item["quantity"], int(qty[-1]) if qty else 1)
                     item["explicit"] = item["explicit"] or bool(qty)
                     if clause.strip() not in item["sources"]:
                         item["sources"].append(clause.strip())
+                    if line not in item.setdefault("lines", []):
+                        item["lines"].append(line)
     return list(items.values())
