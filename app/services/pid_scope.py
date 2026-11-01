@@ -87,8 +87,9 @@ def scope_items(scope_text: str) -> list[dict]:
                     if rating:
                         parts.append(rating[-1])
                     desc = " ".join(parts + [name])
-                    item = items.setdefault(desc, {"description": desc, "quantity": 0, "sources": []})
+                    item = items.setdefault(desc, {"description": desc, "quantity": 0, "sources": [], "explicit": False})
                     item["quantity"] = max(item["quantity"], int(qty[-1]) if qty else 1)
+                    item["explicit"] = item["explicit"] or bool(qty)
                     if clause.strip() not in item["sources"]:
                         item["sources"].append(clause.strip())
     return list(items.values())

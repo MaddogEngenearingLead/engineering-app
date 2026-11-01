@@ -103,14 +103,14 @@ def test_scan_uses_legend_and_scope(pid, tmp_path):
     assert "JFSP-2B" in by_tag
     # decoded through the instrument identification key
     assert by_tag["PAH-5"]["description"] == "Pressure Alarm High"
-    # highlighted existing tank is kept even though it is on the demo page
-    assert by_tag["TK-1"]["highlighted"] is True
+    # tank named in the scope is kept even though it is also on the demo page
+    assert "named in scope" in by_tag["TK-1"]["basis"]
+    assert by_tag["TK-1"]["location"].startswith("p3")
     # unchanged, un-highlighted, not in scope -> excluded and reported
     assert "PI-9" not in by_tag
     assert any(e["tag"] == "PI-9" for e in r["excluded_items"])
-    # highlighted new-work item with no tag is on the BOM
-    flange = [m for m in r["materials"] if m["type"] == "highlighted_item"]
-    assert flange and "Flange" in flange[0]["description"]
+    # scope items that are not drawn as tags still appear, flagged for checking
+    assert any(m["origin"] == "scope" and "lange" in m["description"] for m in r["materials"])
     # unexplained tag-like items are reported instead of silently dropped
     assert any(f["type"] == "unidentified_tags" and "ZZQ-7" in f["tags"] for f in r["flags"])
 
@@ -144,3 +144,27 @@ def test_scope_items_from_install_lines():
     items = {i["description"]: i["quantity"] for i in scope_items(text)}
     assert items['3/4" Plug'] == 2
     assert items['4" 150# Pneumatic Operated Valve w/ Operator'] == 1
+
+
+def test_every_item_has_location_and_review_roundtrip(pid, tmp_path):
+    from app.job_manager import JobManager
+    from app.services.job_scan import load_review, run_job_scan, save_review
+
+    scope = tmp_path / "scope.txt"
+    scope.write_text("Install PCV-101 and the VFD-1 drive. Add a new 4in flange.")
+    jm = JobManager(str(tmp_path / "uploads"))
+    jm.create_job("T-9")
+    jm.add_job_files("T-9", str(pid), str(scope))
+    out = run_job_scan(jm, "T-9")
+    assert out["status"] == "completed"
+    drawn = [m for m in out["result"]["materials"] if m["origin"] == "drawing"]
+    assert drawn and all(m["location"] and m["locations"] for m in drawn)
+
+    review = load_review(jm, "T-9")
+    mats = review["materials"][:-1]  # user removes the last item
+    paths = save_review(jm, "T-9", mats, ["Q: flange size? -> A: 4in"])
+    import csv, json
+    with open(paths["bom_csv"]) as f:
+        rows = list(csv.DictReader(f))
+    assert len(rows) == len(mats) and "location" in rows[0]
+    assert json.load(open(paths["bom_json"]))["clarifications"] == ["Q: flange size? -> A: 4in"]

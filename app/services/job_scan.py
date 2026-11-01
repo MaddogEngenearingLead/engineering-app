@@ -32,7 +32,48 @@ def _store(jm: JobManager, job_number: str, values: dict) -> None:
         (job_dir / "job_metadata.json").write_text(json.dumps(meta, indent=2))
 
 
-def run_job_scan(jm: JobManager, job_number: str) -> dict:
+def _review_path(jm: JobManager, job_number: str) -> Path:
+    job_dir, _, _ = jm.get_job_dirs(job_number)
+    out = job_dir / "bom_exports"
+    out.mkdir(parents=True, exist_ok=True)
+    return out / "review.json"
+
+
+def load_review(jm: JobManager, job_number: str) -> dict | None:
+    """The saved scan + user edits for a job, or None if it was never scanned."""
+    try:
+        path = _review_path(jm, job_number)
+        return json.loads(path.read_text()) if path.is_file() else None
+    except Exception:
+        return None
+
+
+def save_review(jm: JobManager, job_number: str, materials: list[dict],
+                clarifications: list[str]) -> dict:
+    """Store the user's edits and re-export the PDF/JSON/CSV BOM."""
+    from app.services.bom_export import export_all
+
+    review = load_review(jm, job_number)
+    if not review:
+        raise ValueError("Run the BOM scan first.")
+    for i, m in enumerate(materials, 1):
+        m["item_number"] = i
+    result = review["result"]
+    job_dir, _, _ = jm.get_job_dirs(job_number)
+    notes = [f["message"] for f in result.get("flags", []) if f.get("severity") in ("warning", "review")]
+    paths = export_all(f"JOB-{job_number}", Path(review["pid_file"]).name, materials,
+                       result.get("scope_text", ""), notes, result.get("detected_assets", []),
+                       str(job_dir / "bom_exports"), clarifications)
+    review.update(materials=materials, clarifications=clarifications)
+    _review_path(jm, job_number).write_text(json.dumps(review, indent=2, default=str))
+    _store(jm, job_number, {"bom_status": "completed", "bom_item_count": len(materials),
+                            "bom_generated_at": datetime.now().isoformat(),
+                            **{k: str(Path(v).resolve()) for k, v in paths.items()}})
+    return paths
+
+
+def run_job_scan(jm: JobManager, job_number: str, demo_pages: list[int] | None = None,
+                 new_work_pages: list[int] | None = None) -> dict:
     """Scan the job's P&ID against its scope and generate the BOM.
 
     Returns a dict with ``status`` of ``completed``, ``needs_clarification`` or
@@ -63,6 +104,8 @@ def run_job_scan(jm: JobManager, job_number: str) -> dict:
         result = build_scoped_bom(
             str(pid_path),
             scope_text=scope_text,
+            demo_pages=demo_pages,
+            new_work_pages=new_work_pages,
             job_id=f"JOB-{job_number}",
             source_file=pid_path.name,
             output_dir=str(job_dir / "bom_exports"),
@@ -72,10 +115,20 @@ def run_job_scan(jm: JobManager, job_number: str) -> dict:
             questions = result.get("questions") or []
             message = questions[0].get("message") if questions else "Scan needs clarification."
             _store(jm, job_number, {"bom_status": "needs_clarification", "bom_message": message})
+            _review_path(jm, job_number).write_text(json.dumps(
+                {"pid_file": str(pid_path.resolve()), "result": result, "materials": [], "clarifications": []},
+                indent=2, default=str))
             return {"status": "needs_clarification", "message": message}
 
         def _p(value):
             return str(Path(value).resolve()) if value else None
+
+        _review_path(jm, job_number).write_text(json.dumps({
+            "pid_file": str(pid_path.resolve()),
+            "result": result,
+            "materials": result.get("materials") or [],
+            "clarifications": [],
+        }, indent=2, default=str))
 
         _store(jm, job_number, {
             "bom_status": "completed",

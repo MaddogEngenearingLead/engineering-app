@@ -18,6 +18,7 @@ def export_bom_to_pdf(
     scope_of_work: str = "",
     review_notes: list[str] = None,
     output_dir: str = "bom_exports",
+    clarifications: list[str] = None,
 ) -> str:
     """
     Export BOM to professional PDF file with job ID and timestamp in filename.
@@ -129,29 +130,32 @@ def export_bom_to_pdf(
     
     # Build materials table
     materials_data = [
-        ["Item #", "Tag ID", "Description", "Type", "Qty", "Unit", "Confidence"]
+        ["#", "Tag ID", "Description", "Type", "Qty", "Unit", "Location", "Conf."]
     ]
+    cell = ParagraphStyle('Cell', parent=styles['Normal'], fontSize=8, leading=9.5)
     
     for material in materials:
         materials_data.append([
-            str(material['item_number']),
-            material['tag_id'],
-            material['description'],
-            material['type'].replace('_', ' ').title(),
-            str(material['quantity']),
-            material['unit'],
-            f"{material['confidence']:.0%}",
+            str(material.get('item_number', '')),
+            Paragraph(str(material.get('tag_id', '')), cell),
+            Paragraph(str(material.get('description', '')), cell),
+            Paragraph(str(material.get('type', '')).replace('_', ' ').title(), cell),
+            str(material.get('quantity', '')),
+            material.get('unit', ''),
+            Paragraph(str(material.get('location') or '-'), cell),
+            f"{material.get('confidence', 0):.0%}",
         ])
     
     materials_table = Table(
         materials_data,
-        colWidths=[0.5*inch, 0.8*inch, 2.2*inch, 1.2*inch, 0.4*inch, 0.4*inch, 0.6*inch]
+        colWidths=[0.35*inch, 0.8*inch, 1.9*inch, 0.9*inch, 0.4*inch, 0.4*inch, 1.9*inch, 0.5*inch], repeatRows=1
     )
     materials_table.setStyle(TableStyle([
         ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#007bff')),
         ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
         ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
         ('ALIGN', (2, 0), (2, -1), 'LEFT'),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
         ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
         ('FONTSIZE', (0, 0), (-1, 0), 10),
         ('FONTSIZE', (0, 1), (-1, -1), 9),
@@ -170,6 +174,12 @@ def export_bom_to_pdf(
             elements.append(Paragraph(f"• {note}", normal_style))
         elements.append(Spacer(1, 0.2*inch))
     
+    if clarifications:
+        elements.append(Paragraph("Clarifications", heading_style))
+        for note in clarifications:
+            elements.append(Paragraph(f"• {note}", normal_style))
+        elements.append(Spacer(1, 0.2*inch))
+
     # Footer
     elements.append(Spacer(1, 0.1*inch))
     footer_text = "This Bill of Materials was automatically generated from P&ID scan data. " \
@@ -196,6 +206,7 @@ def export_bom_to_json(
     review_notes: list[str] = None,
     detected_assets: list[dict] = None,
     output_dir: str = "bom_exports",
+    clarifications: list[str] = None,
 ) -> str:
     """
     Export BOM to JSON file for programmatic access and archival.
@@ -233,6 +244,7 @@ def export_bom_to_json(
         "materials": materials,
         "total_items": len(materials),
         "review_notes": review_notes,
+        "clarifications": clarifications or [],
     }
 
     file_path.write_text(json.dumps(bom_data, indent=2))
@@ -275,3 +287,16 @@ def export_bom_to_csv(
         writer.writerows(materials)
 
     return str(file_path)
+
+
+def export_all(job_id: str, source_file: str, materials: list[dict], scope_of_work: str,
+               review_notes: list[str], detected_assets: list[dict], output_dir: str,
+               clarifications: list[str] | None = None) -> dict:
+    """Write the PDF, JSON and CSV BOM; returns their paths."""
+    return {
+        "bom_pdf": export_bom_to_pdf(job_id, source_file, materials, scope_of_work, review_notes,
+                                     output_dir, clarifications=clarifications),
+        "bom_json": export_bom_to_json(job_id, source_file, materials, scope_of_work, review_notes,
+                                       detected_assets, output_dir, clarifications=clarifications),
+        "bom_csv": export_bom_to_csv(job_id, materials, output_dir),
+    }

@@ -1,4 +1,4 @@
-"""Tkinter Job Manager: login, dashboard and new-job screens.
+"""Tkinter Job Manager: dashboard, new-job and BOM review screens (local, no login).
 
 Launch with: python -m app.gui
 
@@ -15,12 +15,12 @@ import sys
 import threading
 import tkinter as tk
 from pathlib import Path
-from tkinter import messagebox, ttk
+from tkinter import messagebox, simpledialog, ttk
 
 from tkinterdnd2 import DND_FILES, TkinterDnD
 
 from app.job_manager import JobManager
-from app.services.accounts import SECURITY_QUESTIONS, AccountError, AccountStore
+from app.gui.review_window import ReviewWindow
 from app.services.job_scan import run_job_scan
 from app.services.updater import (
     UpdateInfo, apply_update, can_self_update, check_for_update, check_for_update_status, download_update,
@@ -62,12 +62,10 @@ class JobManagerApp(TkinterDnD.Tk):
         self.geometry("640x500")
         self.configure(padx=20, pady=20)
         self.jobs = JobManager(get_upload_dir())
-        self.accounts = AccountStore(Path(get_upload_dir()).parent)
-        self.current_user: str | None = None
         self.running: set[str] = set()
         self.update_info: UpdateInfo | None = None
         self.updating = False
-        self.show_login_screen()
+        self.show_dashboard()
         threading.Thread(target=self._check_updates, daemon=True).start()
 
     def clear_screen(self):
@@ -100,7 +98,7 @@ class JobManagerApp(TkinterDnD.Tk):
         self.refresh_screen()
 
     def refresh_screen(self):
-        # Re-render the current screen so the banner appears; skip the login form
+        # Re-render the current screen so the banner appears
         # to avoid wiping what the user is typing.
         if hasattr(self, "username_entry") and self.username_entry.winfo_exists():
             self._render_update_banner()
@@ -157,49 +155,6 @@ class JobManagerApp(TkinterDnD.Tk):
         self._render_update_banner()
         messagebox.showerror("Update failed", f"Could not install the update: {message}")
 
-    def show_login_screen(self):
-        self.clear_screen()
-        tk.Label(self, text="Login", font=("Arial", 18, "bold")).pack(pady=(0, 20))
-        tk.Label(self, text="Username:").pack(anchor="w")
-        self.username_entry = tk.Entry(self, width=40)
-        self.username_entry.pack(pady=5)
-        tk.Label(self, text="Password:").pack(anchor="w")
-        self.password_entry = tk.Entry(self, width=40, show="*")
-        self.password_entry.pack(pady=5)
-        self.password_entry.bind("<Return>", lambda _e: self.process_login())
-        tk.Button(self, text="Login", command=self.process_login, width=20,
-                  bg="#4CAF50", fg="white").pack(pady=15)
-        tk.Button(self, text="Create Account", command=self.create_account,
-                  relief="flat", fg="blue").pack()
-        tk.Button(self, text="Forgot password?", command=self.forgot_password,
-                  relief="flat", fg="blue").pack()
-
-    def process_login(self):
-        username = self.username_entry.get().strip()
-        password = self.password_entry.get()
-        if not username or not password:
-            messagebox.showerror("Error", "Please enter both username and password")
-            return
-        if not self.accounts.has_accounts():
-            messagebox.showinfo("No accounts", "No accounts exist yet. Click 'Create Account' first.")
-            return
-        try:
-            self.current_user = self.accounts.authenticate(username, password)
-        except AccountError as exc:
-            messagebox.showerror("Login failed", str(exc))
-            return
-        self.show_dashboard()
-
-    def create_account(self):
-        AccountWindow(self)
-
-    def forgot_password(self):
-        ResetPasswordWindow(self, self.username_entry.get().strip())
-
-    def logout(self):
-        self.current_user = None
-        self.show_login_screen()
-
     # ------------------------------------------------------------------
     # Dashboard
     # ------------------------------------------------------------------
@@ -209,10 +164,8 @@ class JobManagerApp(TkinterDnD.Tk):
         header = tk.Frame(self)
         header.pack(fill="x", pady=(0, 10))
         tk.Label(header, text="Dashboard", font=("Arial", 18, "bold")).pack(side="left")
-        tk.Button(header, text="Log out", command=self.logout, relief="groove").pack(side="right")
         tk.Button(header, text="Check for updates", command=self.check_updates_manually,
-                  relief="groove").pack(side="right", padx=6)
-        tk.Label(header, text=f"{self.current_user or ''}  ", fg="gray").pack(side="right")
+                  relief="groove").pack(side="right")
         tk.Button(self, text="+ Start a New Job", command=self.open_new_job_window,
                   width=20, bg="#2196F3", fg="white").pack(pady=10)
         tk.Label(self, text="Your Jobs (click a job to generate its BOM):",
@@ -258,10 +211,15 @@ class JobManagerApp(TkinterDnD.Tk):
                     b.pack(side="left", padx=(6, 0))
                     b.bind("<Button-1>", lambda _e, p=path: self._open(p))
         elif status == "needs_clarification":
-            tk.Label(row, text="  BOM needs review", fg="#b36b00").pack(side="left")
+            tk.Label(row, text="  Pages unclear", fg="#b36b00").pack(side="left")
+            tk.Button(row, text="Choose pages", relief="groove",
+                      command=lambda n=number: self.choose_pages(n)).pack(side="left", padx=6)
         elif status == "error":
             tk.Label(row, text="  BOM failed", fg="red").pack(side="left")
 
+        if status == "completed":
+            tk.Button(row, text="Review / clarify", relief="groove",
+                      command=lambda n=number: self.open_review(n)).pack(side="right", padx=(0, 6))
         tk.Button(row, text="Regenerate BOM", command=lambda n=number: self.start_scan(n),
                   relief="groove").pack(side="right")
 
@@ -275,14 +233,31 @@ class JobManagerApp(TkinterDnD.Tk):
     # Background scan
     # ------------------------------------------------------------------
 
-    def start_scan(self, job_number: str):
+    def open_review(self, job_number: str):
+        ReviewWindow(self, self.jobs, job_number, on_saved=self.show_dashboard)
+
+    def choose_pages(self, job_number: str):
+        demo = simpledialog.askstring(
+            "Demo pages", "Which page numbers are DEMOLITION drawings? (e.g. 2,3)", parent=self)
+        new = simpledialog.askstring(
+            "New work pages", "Which page numbers are NEW CONSTRUCTION drawings? (e.g. 4,5)", parent=self)
+        try:
+            demo_pages = [int(x) for x in (demo or "").replace(" ", "").split(",") if x]
+            new_pages = [int(x) for x in (new or "").replace(" ", "").split(",") if x]
+        except ValueError:
+            messagebox.showerror("Pages", "Please enter page numbers separated by commas.")
+            return
+        if demo_pages or new_pages:
+            self.start_scan(job_number, demo_pages or None, new_pages or None)
+
+    def start_scan(self, job_number: str, demo_pages=None, new_pages=None):
         if job_number in self.running:
             return
         self.running.add(job_number)
         self.show_dashboard()
 
         def work():
-            outcome = run_job_scan(self.jobs, job_number)
+            outcome = run_job_scan(self.jobs, job_number, demo_pages, new_pages)
             self.after(0, lambda: self._scan_done(job_number, outcome))
 
         threading.Thread(target=work, daemon=True).start()
@@ -292,102 +267,13 @@ class JobManagerApp(TkinterDnD.Tk):
         self.show_dashboard()
         status = outcome.get("status")
         if status == "completed":
-            return  # BOM links now appear next to the job
+            self.open_review(job_number)
+            return
         title = "BOM needs review" if status == "needs_clarification" else "BOM failed"
         messagebox.showwarning(title, f"Job {job_number}: {outcome.get('message')}")
 
     def open_new_job_window(self, job_number: str = "", files: dict | None = None):
         NewJobWindow(self, job_number=job_number, files=files)
-
-
-class AccountWindow(tk.Toplevel):
-    def __init__(self, parent):
-        super().__init__(parent)
-        self.parent = parent
-        self.title("Create Account")
-        self.configure(padx=20, pady=20)
-        self.grab_set()
-        self.username = self._field("Username:")
-        self.password = self._field("Password (min 8 characters):", show="*")
-        self.confirm = self._field("Confirm password:", show="*")
-        tk.Label(self, text="Security question (used to reset your password):").pack(anchor="w", pady=(10, 0))
-        self.question = ttk.Combobox(self, values=SECURITY_QUESTIONS, state="readonly", width=45)
-        self.question.current(0)
-        self.question.pack(pady=5)
-        self.answer = self._field("Answer:")
-        tk.Button(self, text="Create Account", command=self.submit, width=20,
-                  bg="#4CAF50", fg="white").pack(pady=15)
-
-    def _field(self, label: str, show: str | None = None) -> tk.Entry:
-        tk.Label(self, text=label).pack(anchor="w")
-        entry = tk.Entry(self, width=48, show=show or "")
-        entry.pack(pady=3)
-        return entry
-
-    def submit(self):
-        if self.password.get() != self.confirm.get():
-            messagebox.showerror("Error", "Passwords do not match.", parent=self)
-            return
-        try:
-            self.parent.accounts.create_account(
-                self.username.get(), self.password.get(), self.question.get(), self.answer.get()
-            )
-        except AccountError as exc:
-            messagebox.showerror("Error", str(exc), parent=self)
-            return
-        messagebox.showinfo("Account created", "Account created. You can log in now.", parent=self)
-        self.destroy()
-
-
-class ResetPasswordWindow(tk.Toplevel):
-    def __init__(self, parent, username: str = ""):
-        super().__init__(parent)
-        self.parent = parent
-        self.title("Reset Password")
-        self.configure(padx=20, pady=20)
-        self.grab_set()
-        tk.Label(self, text="Username:").pack(anchor="w")
-        self.username = tk.Entry(self, width=48)
-        self.username.pack(pady=3)
-        self.username.insert(0, username)
-        tk.Button(self, text="Next", command=self.load_question).pack(pady=5)
-        self.step2 = tk.Frame(self)
-        self.question_label = tk.Label(self.step2, wraplength=380, justify="left")
-        self.question_label.pack(anchor="w")
-        self.answer = self._entry("Answer:")
-        self.new_password = self._entry("New password (min 8 characters):", show="*")
-        self.confirm = self._entry("Confirm new password:", show="*")
-        tk.Button(self.step2, text="Reset Password", command=self.submit, width=20,
-                  bg="#4CAF50", fg="white").pack(pady=10)
-
-    def _entry(self, label: str, show: str | None = None) -> tk.Entry:
-        tk.Label(self.step2, text=label).pack(anchor="w")
-        entry = tk.Entry(self.step2, width=48, show=show or "")
-        entry.pack(pady=3)
-        return entry
-
-    def load_question(self):
-        try:
-            question = self.parent.accounts.get_question(self.username.get())
-        except AccountError as exc:
-            messagebox.showerror("Error", str(exc), parent=self)
-            return
-        self.question_label.config(text=question)
-        self.step2.pack(fill="x")
-
-    def submit(self):
-        if self.new_password.get() != self.confirm.get():
-            messagebox.showerror("Error", "Passwords do not match.", parent=self)
-            return
-        try:
-            self.parent.accounts.reset_password(
-                self.username.get(), self.answer.get(), self.new_password.get()
-            )
-        except AccountError as exc:
-            messagebox.showerror("Error", str(exc), parent=self)
-            return
-        messagebox.showinfo("Password reset", "Password changed. You can log in now.", parent=self)
-        self.destroy()
 
 
 class NewJobWindow(tk.Toplevel):

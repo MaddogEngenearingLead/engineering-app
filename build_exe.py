@@ -19,6 +19,8 @@ args = [
     "--collect-all", "reportlab",
     "--collect-submodules", "app",
     "--collect-all", "certifi",
+    "--collect-all", "pypdfium2",
+    "--collect-all", "pypdfium2_raw",
     "--collect-all", "httpx",
     "--hidden-import", "docx",
     "--hidden-import", "openpyxl",
