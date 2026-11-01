@@ -314,4 +314,4 @@ def test_ai_settings_roundtrip(tmp_path, monkeypatch):
     monkeypatch.setenv("AI_SETTINGS_FILE", str(tmp_path / "s.json"))
     assert not ai_review.is_enabled()
     ai_review.save_settings({"enabled": True, "api_key": "k", "provider": "gemini"})
-    assert ai_review.is_enabled() and ai_review.get_provider().model == "gemini-2.5-flash"
+    assert ai_review.is_enabled() and ai_review.get_provider().model == "gemini-3.8-flash"

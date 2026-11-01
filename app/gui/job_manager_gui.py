@@ -342,6 +342,11 @@ class AISettingsWindow(tk.Toplevel):
         self.key = tk.Entry(self, width=48, show="*")
         self.key.insert(0, self.settings.get("api_key", ""))
         self.key.pack(anchor="w")
+        tk.Label(self, text="Model (leave blank for the default; change if Google retires it):"
+                 ).pack(anchor="w", pady=(12, 0))
+        self.model = tk.Entry(self, width=48)
+        self.model.insert(0, (self.settings.get("models") or {}).get(self.settings.get("provider"), ""))
+        self.model.pack(anchor="w")
         tk.Label(self, justify="left", fg="#555", text=(
             "Get a free Gemini key at aistudio.google.com/apikey.\n"
             "When on, the drawing pages and scope are sent to the provider.\n"
@@ -357,8 +362,13 @@ class AISettingsWindow(tk.Toplevel):
         if self.enabled.get() and not key:
             messagebox.showwarning("AI settings", "Enter an API key to turn AI review on.", parent=self)
             return
-        self.settings.update(enabled=self.enabled.get(), api_key=key,
-                             provider=self.labels[self.provider.get()])
+        name = self.labels[self.provider.get()]
+        models = dict(self.settings.get("models") or {})
+        if self.model.get().strip():
+            models[name] = self.model.get().strip()
+        else:
+            models.pop(name, None)
+        self.settings.update(enabled=self.enabled.get(), api_key=key, provider=name, models=models)
         self.ai.save_settings(self.settings)
         self.destroy()
 
