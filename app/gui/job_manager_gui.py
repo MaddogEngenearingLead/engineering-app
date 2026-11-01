@@ -23,7 +23,7 @@ from app.job_manager import JobManager
 from app.services.accounts import SECURITY_QUESTIONS, AccountError, AccountStore
 from app.services.job_scan import run_job_scan
 from app.services.updater import (
-    UpdateInfo, apply_update, can_self_update, check_for_update, download_update,
+    UpdateInfo, apply_update, can_self_update, check_for_update, check_for_update_status, download_update,
 )
 from app.version import __version__
 
@@ -83,6 +83,17 @@ class JobManagerApp(TkinterDnD.Tk):
         info = check_for_update()
         if info:
             self.after(0, lambda: self._on_update_found(info))
+
+    def check_updates_manually(self):
+        def work():
+            info, message = check_for_update_status()
+            def done():
+                if info:
+                    self.update_info = info
+                    self.refresh_screen()
+                messagebox.showinfo("Check for updates", message)
+            self.after(0, done)
+        threading.Thread(target=work, daemon=True).start()
 
     def _on_update_found(self, info: UpdateInfo):
         self.update_info = info
@@ -199,6 +210,8 @@ class JobManagerApp(TkinterDnD.Tk):
         header.pack(fill="x", pady=(0, 10))
         tk.Label(header, text="Dashboard", font=("Arial", 18, "bold")).pack(side="left")
         tk.Button(header, text="Log out", command=self.logout, relief="groove").pack(side="right")
+        tk.Button(header, text="Check for updates", command=self.check_updates_manually,
+                  relief="groove").pack(side="right", padx=6)
         tk.Label(header, text=f"{self.current_user or ''}  ", fg="gray").pack(side="right")
         tk.Button(self, text="+ Start a New Job", command=self.open_new_job_window,
                   width=20, bg="#2196F3", fg="white").pack(pady=10)
