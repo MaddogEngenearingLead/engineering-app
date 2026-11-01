@@ -57,27 +57,36 @@ def _headers(accept: str) -> dict[str, str]:
 
 def check_for_update(current: str = __version__, timeout: float = 8.0) -> UpdateInfo | None:
     """Return the newer release for this platform, or None. Never raises."""
+    return check_for_update_status(current, timeout)[0]
+
+
+def check_for_update_status(current: str = __version__, timeout: float = 8.0) -> tuple[UpdateInfo | None, str]:
+    """Like ``check_for_update`` but also returns a human-readable result message."""
     try:
         name = asset_name_for_platform()
         if not name:
-            return None
+            return None, "Updates are only available on Windows and macOS."
         resp = httpx.get(
             f"{API}/repos/{update_config.UPDATE_REPO}/releases/latest",
             headers=_headers("application/vnd.github+json"),
             timeout=timeout,
         )
+        if resp.status_code in (401, 403, 404):
+            return None, (f"Could not read releases (HTTP {resp.status_code}). "
+                          "The update token may be missing, expired or lack access.")
         if resp.status_code != 200:
-            return None
+            return None, f"Update check failed (HTTP {resp.status_code})."
         release = resp.json()
         tag = release.get("tag_name") or ""
         if not is_newer(tag, current):
-            return None
+            return None, f"You are up to date (v{current})."
         for asset in release.get("assets", []):
             if asset.get("name") == name:
-                return UpdateInfo(tag.lstrip("v"), release.get("body") or "", name, asset["url"])
-    except Exception:
-        return None
-    return None
+                return UpdateInfo(tag.lstrip("v"), release.get("body") or "", name, asset["url"]), \
+                    f"Update available: {tag}"
+        return None, f"Release {tag} has no {name} file."
+    except Exception as exc:
+        return None, f"Could not reach GitHub: {exc.__class__.__name__}"
 
 
 def can_self_update() -> bool:
