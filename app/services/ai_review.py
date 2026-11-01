@@ -84,7 +84,7 @@ class Provider:
 class GeminiProvider(Provider):
     name = "gemini"
     label = "Google Gemini (free tier available)"
-    default_model = "gemini-2.5-flash"
+    default_model = "gemini-3.8-flash"
     url = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 
     def generate(self, prompt: str, images: list[bytes]) -> str:
