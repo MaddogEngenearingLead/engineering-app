@@ -2,6 +2,8 @@
 
 PyInstaller cannot cross-compile, so run this on Windows (-> dist/JobManager.exe)
 or macOS (-> dist/JobManager.app) or use the "Build GUI" GitHub Actions workflow.
+
+The BOM scan runs inside the app, so the PDF/BOM libraries are bundled too.
 """
 import sys
 
@@ -12,6 +14,12 @@ args = [
     "--name", "JobManager",
     "--windowed",
     "--collect-all", "tkinterdnd2",
+    "--collect-all", "pdfplumber",
+    "--collect-all", "pdfminer",
+    "--collect-all", "reportlab",
+    "--collect-submodules", "app",
+    "--hidden-import", "docx",
+    "--hidden-import", "openpyxl",
     "--noconfirm",
 ]
 # --onefile with --windowed is deprecated on macOS, which builds a .app bundle instead
