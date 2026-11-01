@@ -18,6 +18,8 @@ args = [
     "--collect-all", "pdfminer",
     "--collect-all", "reportlab",
     "--collect-submodules", "app",
+    "--collect-all", "certifi",
+    "--collect-all", "httpx",
     "--hidden-import", "docx",
     "--hidden-import", "openpyxl",
     "--noconfirm",
