@@ -200,6 +200,8 @@ class JobManagerApp(TkinterDnD.Tk):
         header = tk.Frame(self)
         header.pack(fill="x", pady=(0, 10))
         tk.Label(header, text="Dashboard", font=("Arial", 18, "bold")).pack(side="left")
+        tk.Button(header, text="AI settings", command=lambda: AISettingsWindow(self),
+                  relief="groove").pack(side="right", padx=(0, 6))
         tk.Button(header, text="Check for updates", command=self.check_updates_manually,
                   relief="groove").pack(side="right")
         tk.Button(self, text="+ Start a New Job", command=self.open_new_job_window,
@@ -303,6 +305,8 @@ class JobManagerApp(TkinterDnD.Tk):
         self.show_dashboard()
         status = outcome.get("status")
         if status == "completed":
+            if (outcome.get("ai_note") or "").startswith("AI review was skipped"):
+                messagebox.showinfo("AI review", outcome["ai_note"] + "\n\nThe normal BOM was still generated.")
             self.open_review(job_number)
             return
         title = "BOM needs review" if status == "needs_clarification" else "BOM failed"
@@ -310,6 +314,53 @@ class JobManagerApp(TkinterDnD.Tk):
 
     def open_new_job_window(self, job_number: str = "", files: dict | None = None):
         NewJobWindow(self, job_number=job_number, files=files)
+
+
+class AISettingsWindow(tk.Toplevel):
+    """Turn the optional AI review on or off and choose the provider and key."""
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        from app.services import ai_review
+
+        self.ai = ai_review
+        self.settings = ai_review.load_settings()
+        self.title("AI settings")
+        self.configure(padx=20, pady=20)
+        self.resizable(False, False)
+        self.enabled = tk.BooleanVar(value=bool(self.settings.get("enabled")))
+        tk.Checkbutton(self, text="Use AI to double-check the BOM when it is generated",
+                       variable=self.enabled).pack(anchor="w")
+        tk.Label(self, text="Provider:").pack(anchor="w", pady=(12, 0))
+        self.labels = {cls.label: name for name, cls in ai_review.PROVIDERS.items()}
+        self.provider = ttk.Combobox(self, values=list(self.labels), state="readonly", width=44)
+        current = next((l for l, n in self.labels.items() if n == self.settings.get("provider")),
+                       next(iter(self.labels)))
+        self.provider.set(current)
+        self.provider.pack(anchor="w")
+        tk.Label(self, text="API key:").pack(anchor="w", pady=(12, 0))
+        self.key = tk.Entry(self, width=48, show="*")
+        self.key.insert(0, self.settings.get("api_key", ""))
+        self.key.pack(anchor="w")
+        tk.Label(self, justify="left", fg="#555", text=(
+            "Get a free Gemini key at aistudio.google.com/apikey.\n"
+            "When on, the drawing pages and scope are sent to the provider.\n"
+            "AI findings appear as questions; nothing changes unless you approve it.")
+        ).pack(anchor="w", pady=(10, 0))
+        row = tk.Frame(self)
+        row.pack(anchor="e", pady=(14, 0))
+        tk.Button(row, text="Cancel", command=self.destroy, width=10).pack(side="right", padx=(6, 0))
+        tk.Button(row, text="Save", command=self.save, width=10, bg="#2196F3", fg="white").pack(side="right")
+
+    def save(self):
+        key = self.key.get().strip()
+        if self.enabled.get() and not key:
+            messagebox.showwarning("AI settings", "Enter an API key to turn AI review on.", parent=self)
+            return
+        self.settings.update(enabled=self.enabled.get(), api_key=key,
+                             provider=self.labels[self.provider.get()])
+        self.ai.save_settings(self.settings)
+        self.destroy()
 
 
 class NewJobWindow(tk.Toplevel):

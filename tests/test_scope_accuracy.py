@@ -278,3 +278,40 @@ def test_vocabulary_file_loads(tmp_path, monkeypatch):
     assert v["codes"] == {"XYZ": "Custom Device"}
     assert v["ignore_prefixes"] == {"ABC"}
     assert v["scope_aliases"]["Widget"] == {"XYZ"}
+
+
+def test_ai_review_flags_and_answers(tmp_path, monkeypatch):
+    from app.services import ai_review
+    from app.services.review_questions import apply_answer, build_questions, ensure_uids, undo_answer
+
+    materials = [{"tag_id": "PCV-101", "description": "Valve", "quantity": 1, "type": "valve", "origin": "drawing"},
+                 {"tag_id": "TK-1", "description": "Tank", "quantity": 1, "type": "tank", "origin": "drawing"}]
+    ensure_uids(materials)
+
+    class Fake(ai_review.Provider):
+        name, default_model = "fake", "m"
+
+        def generate(self, prompt, images):
+            assert "PCV-101" in prompt and images
+            return ('```json\n{"key_page": 2, "summary": "ok", "missing": [{"tag": "", "description": "Gasket",'
+                    ' "quantity": 4, "page": 3, "reason": "scope"}, {"tag": "PCV-101", "description": "x"}],'
+                    ' "not_needed": [{"tag": "TK-1", "reason": "reference only"}, {"tag": "NOPE-1"}]}\n```')
+
+    monkeypatch.setattr(ai_review, "render_pages", lambda p: [b"png"])
+    out = ai_review.review_with_ai("x.pdf", "scope", materials, provider=Fake("k"))
+    assert out["key_page"] == 2 and [f["type"] for f in out["flags"]] == ["ai_missing_items", "ai_not_needed"]
+    qs = {q["flag_type"]: q for q in build_questions(out["flags"], materials)}
+    apply_answer(materials, qs["ai_missing_items"], {"checks": ["AI-1"]})
+    assert any(m["description"] == "Gasket" and m["quantity"] == 4 for m in materials)
+    rec = apply_answer(materials, qs["ai_not_needed"], {"checks": ["TK-1"]})
+    assert all(m["tag_id"] != "TK-1" for m in materials)
+    undo_answer(materials, rec)
+    assert any(m["tag_id"] == "TK-1" for m in materials)
+
+
+def test_ai_settings_roundtrip(tmp_path, monkeypatch):
+    from app.services import ai_review
+    monkeypatch.setenv("AI_SETTINGS_FILE", str(tmp_path / "s.json"))
+    assert not ai_review.is_enabled()
+    ai_review.save_settings({"enabled": True, "api_key": "k", "provider": "gemini"})
+    assert ai_review.is_enabled() and ai_review.get_provider().model == "gemini-2.5-flash"
