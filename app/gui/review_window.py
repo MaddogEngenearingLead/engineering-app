@@ -151,7 +151,7 @@ class QuestionDialog(tk.Toplevel):
         if q.get("locations"):
             tk.Button(self, text=f"Show on drawing ({len(q['locations'])} location"
                                  f"{'s' if len(q['locations']) != 1 else ''})", relief="groove",
-                      command=lambda: show_cb(q)).pack(anchor="w", pady=4)
+                      command=lambda: self._show(show_cb, q)).pack(anchor="w", pady=4)
 
         self.choice = tk.StringVar(value=prev_in.get("choice") or "")
         for value, label in q.get("choices", []):
@@ -183,8 +183,15 @@ class QuestionDialog(tk.Toplevel):
         row.pack(fill="x", pady=(12, 0))
         tk.Button(row, text="Cancel", command=self.destroy).pack(side="right", padx=4)
         tk.Button(row, text="Apply answer", bg="#4CAF50", fg="white", command=self.ok).pack(side="right")
-        self.grab_set()
         self.transient(parent)
+        self.viewer = None
+        self.protocol("WM_DELETE_WINDOW", self.destroy)
+
+    def _show(self, show_cb, q):
+        # The viewer is a child of this dialog, so it closes with it; no grab, so windows can be switched.
+        if self.viewer is not None and self.viewer.winfo_exists():
+            self.viewer.destroy()
+        self.viewer = show_cb(q, self)
 
     def ok(self):
         if self.q.get("choices") and not self.choice.get():
@@ -354,10 +361,10 @@ class ReviewWindow(tk.Toplevel):
         if sel:
             self.flags.selection_set(sel[0])
 
-    def _show_question(self, q: dict):
+    def _show_question(self, q: dict, parent=None):
         locs = q.get("locations") or []
         try:
-            LocationViewer(self, self.pid_file, q["title"], locs, None)
+            return LocationViewer(parent or self, self.pid_file, q["title"], locs, None)
         except Exception as exc:
             messagebox.showerror("Location", f"Could not draw the P&ID: {exc}", parent=self)
 
@@ -369,7 +376,7 @@ class ReviewWindow(tk.Toplevel):
         q = self.questions[sel[0]]
         previous = self.answers.get(q["id"])
         dlg = QuestionDialog(self, q, previous, self._show_question)
-        self.wait_window(dlg)
+        self.wait_window(dlg)  # waits without grabbing, so other windows stay usable
         if not dlg.result:
             return
         if previous:
