@@ -1,250 +1,117 @@
-# Engineering App
+# Engineering App – P&ID vs Scope-of-Work BOM
 
-A full-stack foundation for visualizing and managing process and instrumentation diagram (P&ID) and pipeline engineering data.
+A **local-only desktop app** that reads a P&ID drawing (PDF), compares it with a
+scope-of-work document, and produces a bill of materials (BOM) containing only
+what the scope calls for. Nothing leaves the computer: there are no accounts, no
+login and no cloud service. The app only contacts GitHub to check for updates.
 
-The project currently combines a small FastAPI backend with a browser-based HTML/CSS/JavaScript dashboard. It is designed to grow into a document-processing platform for extracting engineering assets, generating bills of materials, and managing engineering workflows.
+## How it works
 
-## Current status
+1. **Create a job** – enter a job number and drop in the P&ID PDF and the scope (Word, PDF or text).
+2. **Generate the BOM** – the app:
+   - detects demo, new-work and legend pages and the markup colour convention
+     (green = new, red = demo, blue clouds = future, bold = in scope, grey = existing);
+   - counts tagged items on the new-work pages and records a drawing location
+     (page and grid, e.g. `p4 D-12`) for each;
+   - keeps an item only if it is new work **and** the scope refers to it (by tag, code or name);
+   - adds scope-only rows for work the scope lists but the drawing cannot count
+     (valves, flanges, supports), anchored to a page or nearby equipment;
+   - lists highlighted piping runs by size.
+3. **Review / clarify** – open the review window to:
+   - see every item with its location and why it is on the BOM;
+   - use **Show on drawing** with Previous/Next and zoom to look at each location;
+   - answer the **questions** the scan could not settle (marked `[OPEN]` / `[answered]`).
+     Each question says what is asked, why, and where on the drawing. Answers add or
+     change BOM items and are recorded on the BOM; answered questions stop being flagged.
+     Answers are kept if the BOM is regenerated;
+   - edit, remove or add items and add free-text clarification notes.
+4. **Save and re-export** – the BOM PDF (items, locations, clarifications, remaining
+   review notes) is rewritten. CSV and JSON copies are written next to it in `bom_exports/`
+   for internal use.
 
-The repository is an early-stage foundation. The backend currently provides health and pipeline-summary endpoints, while the frontend contains dashboard views and browser-local asset management. Python dependencies have been validated and the backend is ready for API development.
+Nothing is specific to one drawing or scope; the files used during development are
+test data only.
 
-See [`IMPLEMENTATION_ROADMAP.md`](IMPLEMENTATION_ROADMAP.md) for the planned implementation phases.
+## Install (end users)
 
-## Features
+Download the latest release from the repository's **Releases** page:
 
-### Backend
+- **Windows:** `JobManager.exe` (single file, no Python needed).
+- **macOS:** `JobManager-macos.zip` (unzip and open `JobManager.app`).
 
-- FastAPI application with automatic OpenAPI documentation
-- Health check endpoint
-- Pipeline summary endpoint
-- Pydantic and environment-configuration dependencies ready for expansion
-- Docker image for running the API on port `8000`
+Updates: the app checks for a new version at launch and can update itself
+(**Check for updates**). Releases are built automatically by GitHub Actions
+(`.github/workflows/build-gui.yml`) when a `v*` tag is pushed. An optional Windows
+installer is described in [`installer/README.md`](installer/README.md).
 
-### Frontend
+## Run from source (developers)
 
-- Dashboard overview for engineering assets
-- Equipment inventory views
-- Pipeline and asset detail pages
-- P&ID viewer interface
-- BOM generator interface
-- Reports and alarms pages
-- Responsive styling and light/dark display support
-- Browser `localStorage` for the current frontend data model
+Requires Python 3.12 (3.10+ should work) and, on Linux, `python3-tk`.
 
-## Repository structure
+```bash
+python -m venv .venv
+source .venv/bin/activate        # Windows: .venv\Scripts\activate
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+python run_gui.py                # or: python -m app.gui
+python -m pytest tests -q        # run the tests
+python run_gui.py --selftest     # headless scan + review-save check (used by CI)
+```
+
+Build the standalone app on the target OS: `pip install pyinstaller && python build_exe.py`
+(`dist/JobManager.exe` on Windows, `dist/JobManager.app` on macOS).
+
+## Repository layout
 
 ```text
-.
-├── app/
-│   ├── main.py                 # FastAPI application entry point
-│   ├── api/routes.py           # API routes under /api
-│   ├── models/                 # Pipeline data models
-│   └── services/               # Pipeline service layer
-├── frontend/
-│   ├── index.html              # Main dashboard
-│   ├── equipment.html          # Equipment inventory
-│   ├── asset-details.html      # Asset details
-│   ├── pid-viewer.html         # P&ID viewer
-│   ├── bom-generator.html      # BOM interface
-│   ├── reports.html             # Reports view
-│   ├── alarms.html              # Alarms view
-│   ├── script.js                # Dashboard behavior
-│   ├── pid-visualizer.js        # P&ID visualization behavior
-│   ├── bom-generator.js         # BOM interface behavior
-│   └── styles.css               # Shared frontend styles
-├── Dockerfile
-├── IMPLEMENTATION_ROADMAP.md
-├── requirements.txt
-└── README.md
+app/
+  gui/job_manager_gui.py   # dashboard: jobs, file drop, scan progress, update banner
+  gui/review_window.py     # review window, question dialog, drawing viewer
+  job_manager.py           # job folders and job files (<uploads>/<job>.json)
+  file_detector.py         # reads scope text (docx/pdf/txt)
+  services/
+    job_scan.py            # scan orchestration, review.json (edits + answers)
+    scope_bom.py           # page classification, legend, scope items, pipeline
+    pid_labels.py          # label scan, highlight regions, colour convention
+    pid_markup.py          # pipe runs and markup notes
+    pid_scope.py           # scope item extraction
+    bom_select.py          # which items go on the BOM, and why
+    review_questions.py    # flags -> questions; applying/undoing answers
+    bom_export.py          # PDF / JSON / CSV export
+    updater.py             # GitHub release check and in-place update
+  version.py, update_config.py
+  main.py, api/, config.py # optional local HTTP API (see below)
+frontend/                  # legacy browser UI for the HTTP API (not used by the desktop app)
+tests/                     # pytest suite
+build_exe.py, run_gui.py   # packaging and entry point
+installer/, scripts/       # optional Windows installer
 ```
 
-## Requirements
+## Optional local HTTP API
 
-- Python 3.10 or newer
-- A modern web browser
-- Optional: Docker
-
-## Quick Start: Run Tests from a Fresh Window
-
-### Windows (Git Bash)
+A small FastAPI service exposes the same scan for scripting:
 
 ```bash
-# Clone or navigate to the repository
-cd engineering-app
-
-# Create a virtual environment
-python -m venv .venv
-
-# Activate the virtual environment (use 'source' in Git Bash)
-source .venv/Scripts/activate
-
-# Upgrade pip
-python -m pip install --upgrade pip
-
-# Install dependencies
-pip install -r requirements.txt
-
-# Run tests
-python -m pytest tests -q
-
-# View test results summary
+uvicorn app.main:app --reload     # http://localhost:8000/docs
 ```
 
-### macOS / Linux (Bash)
+Main routes (prefix `/api`): `GET /health`, `POST /scan`, `POST /jobs`,
+`POST /jobs/{job}/upload-pid`, `POST /jobs/{job}/upload-scope`, `POST /jobs/{job}/scan`,
+`GET /materials`. A `Dockerfile` is provided (`docker build -t engineering-app . &&
+docker run --rm -p 8000:8000 engineering-app`). The API has no interactive review or
+question flow; that lives in the desktop app.
 
-```bash
-# Clone or navigate to the repository
-cd engineering-app
+## Known limitations
 
-# Create a virtual environment
-python3 -m venv .venv
-
-# Activate the virtual environment
-source .venv/bin/activate
-
-# Upgrade pip
-python -m pip install --upgrade pip
-
-# Install dependencies
-pip install -r requirements.txt
-
-# Run tests
-python -m pytest tests -q
-
-# View test results summary
-```
-
-### Windows (Command Prompt / PowerShell)
-
-```cmd
-# Clone or navigate to the repository
-cd engineering-app
-
-# Create a virtual environment
-python -m venv .venv
-
-# Activate the virtual environment
-.venv\Scripts\activate
-
-# Upgrade pip
-python -m pip install --upgrade pip
-
-# Install dependencies
-pip install -r requirements.txt
-
-# Run tests
-python -m pytest tests -q
-
-# View test results summary
-```
-
-## Run the backend locally
-
-Create and activate a virtual environment, then install the Python dependencies:
-
-```bash
-python -m venv .venv
-source .venv/bin/activate       # Windows Git Bash: source .venv/Scripts/activate
-                                 # Windows CMD: .venv\Scripts\activate
-python -m pip install --upgrade pip
-pip install -r requirements.txt
-```
-
-Start the development server:
-
-```bash
-uvicorn app.main:app --reload
-```
-
-The API will be available at:
-
-- Root response: <http://localhost:8000/>
-- Health check: <http://localhost:8000/api/health>
-- Pipeline summary: <http://localhost:8000/api/pipeline>
-- Swagger UI: <http://localhost:8000/docs>
-- ReDoc: <http://localhost:8000/redoc>
-
-### Example API responses
-
-```bash
-curl http://localhost:8000/api/health
-# {"status":"ok","service":"engineering-app"}
-
-curl http://localhost:8000/api/pipeline
-# {"asset_count":0,"status":"initialized","message":"Pipeline monitoring dashboard is ready for configuration."}
-```
-
-## Run with Docker
-
-Build and start the API container from the repository root:
-
-```bash
-docker build -t engineering-app .
-docker run --rm -p 8000:8000 engineering-app
-```
-
-Then open <http://localhost:8000/docs> to inspect the API.
-
-## Open the frontend
-
-The frontend is a static dashboard and can be opened directly in a browser:
-
-```bash
-# macOS
-open frontend/index.html
-
-# Linux
-xdg-open frontend/index.html
-```
-
-Alternatively, serve it with a local HTTP server:
-
-```bash
-python -m http.server 8080 --directory frontend
-```
-
-Then open <http://localhost:8080>.
-
-> The current frontend stores its data in browser `localStorage`. It is not yet connected to persistent backend storage.
-
-## API overview
-
-The FastAPI router uses the `/api` prefix:
-
-| Method | Endpoint | Description |
-| --- | --- | --- |
-| `GET` | `/` | Confirms that the API is running |
-| `GET` | `/api/health` | Returns service health information |
-| `GET` | `/api/pipeline` | Returns the initial pipeline summary |
-
-Interactive API documentation is generated automatically at `/docs` and `/redoc` when the server is running.
-
-## Development notes
-
-- Keep backend code under `app/` and static dashboard assets under `frontend/`.
-- Add or update API routes in `app/api/routes.py`.
-- The application entry point is `app.main:app`.
-- Do not treat roadmap components such as databases, OCR, background workers, and persistent project storage as available until they are implemented and configured.
+- Valve, flange and fitting **symbols without text labels cannot be counted**; they appear as scope-only rows with a page or equipment location.
+- Piping is listed by size as runs, not footage (no drawing scale is measured).
+- Colour/boldness detection assumes the green/red/blue markup convention; other conventions fall back to "highlighted, or named in scope".
+- Scanned drawings without a text layer need OCR, which is not implemented.
 
 ## Roadmap
 
-Planned work includes:
-
-1. Stabilize local startup and add automated smoke tests.
-2. Add P&ID document upload and extraction workflows.
-3. Persist projects, documents, scan jobs, equipment, and BOM data.
-4. Add OCR, symbol detection, topology analysis, and quality scoring.
-5. Connect the frontend to project-scoped API endpoints.
-6. Add authentication, review workflows, analytics, and production deployment support.
-
-For the detailed task breakdown and current planning status, see [`IMPLEMENTATION_ROADMAP.md`](IMPLEMENTATION_ROADMAP.md).
+See [`IMPLEMENTATION_ROADMAP.md`](IMPLEMENTATION_ROADMAP.md) for what is done and what is next.
 
 ## License
 
-No license has been specified yet for this project.
-
-## Desktop GUI
-
-Run the Tkinter Job Manager with `python -m app.gui` (requires `tkinterdnd2`, listed in requirements.txt).
-
-To build a standalone app, run `pip install tkinterdnd2 pyinstaller && python build_exe.py` on the target OS: Windows produces `dist/JobManager.exe`, macOS produces `dist/JobManager.app`. PyInstaller cannot cross-compile, so alternatively run the **Build GUI** GitHub Actions workflow (Actions tab -> Run workflow) and download the Windows and macOS artifacts. On Linux, install `python3-tk` first. You can also run from source with `python run_gui.py`.
+No license has been specified yet.
