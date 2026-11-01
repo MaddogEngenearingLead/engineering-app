@@ -43,6 +43,95 @@ def render_page(pdf_path: str, page: int, width: int = 1100) -> bytes:
         return buf.getvalue()
 
 
+class LocationViewer(tk.Toplevel):
+    """Drawing viewer: Previous/Next through an item's locations, zoom in/out."""
+    VIEW_W, VIEW_H = 900, 600
+    RENDER_SCALE = 3.0  # pixels per PDF point; zooming crops this rendering
+
+    def __init__(self, parent, pdf_path: str, title: str, locs: list[dict], page: int | None = None):
+        super().__init__(parent)
+        self.pdf_path, self.locs, self.whole_page = pdf_path, locs, page
+        self.index, self.zoom = 0, 1.0
+        self._pages: dict[int, object] = {}
+        self.title(title)
+        bar = tk.Frame(self)
+        bar.pack(fill="x", padx=6, pady=4)
+        self.prev_btn = tk.Button(bar, text="< Previous", command=lambda: self.step(-1))
+        self.next_btn = tk.Button(bar, text="Next >", command=lambda: self.step(1))
+        for b in (self.prev_btn, self.next_btn):
+            b.pack(side="left", padx=2)
+        self.counter = tk.Label(bar, font=("Arial", 10, "bold"))
+        self.counter.pack(side="left", padx=10)
+        tk.Button(bar, text="Zoom +", command=lambda: self.set_zoom(self.zoom * 1.5)).pack(side="right", padx=2)
+        tk.Button(bar, text="Zoom -", command=lambda: self.set_zoom(self.zoom / 1.5)).pack(side="right", padx=2)
+        self.label = tk.Label(self)
+        self.label.pack()
+        tk.Label(self, fg="gray", text="Left/Right arrows = previous/next   + / - or mouse wheel = zoom"
+                 ).pack(pady=(0, 4))
+        self.bind("<Left>", lambda _e: self.step(-1))
+        self.bind("<Right>", lambda _e: self.step(1))
+        for k in ("<plus>", "<equal>", "<KP_Add>"):
+            self.bind(k, lambda _e: self.set_zoom(self.zoom * 1.5))
+        for k in ("<minus>", "<KP_Subtract>"):
+            self.bind(k, lambda _e: self.set_zoom(self.zoom / 1.5))
+        self.bind("<MouseWheel>", lambda e: self.set_zoom(self.zoom * (1.25 if e.delta > 0 else 0.8)))
+        self.bind("<Button-4>", lambda _e: self.set_zoom(self.zoom * 1.25))
+        self.bind("<Button-5>", lambda _e: self.set_zoom(self.zoom * 0.8))
+        self.focus_set()
+        self.show()
+
+    def _page_image(self, page: int):
+        if page not in self._pages:
+            import pdfplumber
+            with pdfplumber.open(self.pdf_path) as pdf:
+                pg = pdf.pages[page - 1]
+                self._pages[page] = (pg.to_image(resolution=72 * self.RENDER_SCALE).original.convert("RGB"),
+                                     float(pg.width), float(pg.height))
+        return self._pages[page]
+
+    def step(self, delta: int):
+        if len(self.locs) > 1:
+            self.index = (self.index + delta) % len(self.locs)
+            self.show()
+
+    def set_zoom(self, value: float):
+        self.zoom = min(8.0, max(0.15, value))
+        self.show()
+
+    def show(self):
+        from PIL import ImageDraw
+
+        loc = self.locs[self.index] if self.locs else {"page": self.whole_page}
+        img, pw, ph = self._page_image(int(loc["page"]))
+        k = img.width / pw
+        # zoom 1.0 shows about 520 x 350 pt around the item; whole pages start fitted to the window
+        view_w_pt = (520 if self.locs else pw) / self.zoom
+        view_h_pt = view_w_pt * self.VIEW_H / self.VIEW_W
+        if self.locs:
+            cx, cy = loc["x"] * k, loc["y"] * k
+            draw = ImageDraw.Draw(img := img.copy())
+            r = 55 / self.zoom ** 0.3 * self.RENDER_SCALE / 1.5
+            draw.ellipse((cx - r, cy - r, cx + r, cy + r), outline=(255, 0, 255), width=int(5 * self.RENDER_SCALE / 1.5))
+        else:
+            cx, cy = img.width / 2, img.height / 2
+        w, h = view_w_pt * k, view_h_pt * k
+        left = min(max(0, cx - w / 2), max(0, img.width - w))
+        top = min(max(0, cy - h / 2), max(0, img.height - h))
+        crop = img.crop((int(left), int(top), int(min(img.width, left + w)), int(min(img.height, top + h))))
+        crop = crop.resize((self.VIEW_W, int(self.VIEW_W * crop.height / max(1, crop.width))))
+        buf = io.BytesIO()
+        crop.save(buf, format="PNG")
+        self.photo = tk.PhotoImage(data=base64.b64encode(buf.getvalue()))
+        self.label.config(image=self.photo)
+        n = len(self.locs)
+        grid = loc.get("grid", "")
+        self.counter.config(text=(f"{self.index + 1} of {n}  -  page {loc['page']} {grid}" if n
+                                  else f"Page {loc['page']} (whole page)") + f"   zoom {self.zoom:.1f}x")
+        state = "normal" if n > 1 else "disabled"
+        self.prev_btn.config(state=state)
+        self.next_btn.config(state=state)
+
+
 class ItemDialog(simpledialog.Dialog):
     def __init__(self, parent, title: str, item: dict):
         self.item = item
@@ -90,7 +179,7 @@ class ReviewWindow(tk.Toplevel):
         self.result = review["result"]
         self.materials = [dict(m) for m in review["materials"]]
         self.clarifications: list[str] = list(review.get("clarifications", []))
-        self._cycle: dict[int, int] = {}
+        
         self._build()
         self._fill()
 
@@ -199,27 +288,14 @@ class ReviewWindow(tk.Toplevel):
             return
         m = self.materials[i]
         locs = m.get("locations") or []
+        if not locs and not m.get("page"):
+            messagebox.showinfo("Location", "No drawing location is known for this item.", parent=self)
+            return
+        name = m.get("tag_id") if m.get("tag_id") not in (None, "-") else m.get("description")
         try:
-            if locs:
-                k = self._cycle.get(i, 0) % len(locs)
-                self._cycle[i] = k + 1
-                loc = locs[k]
-                png = render_location(self.pid_file, loc["page"], loc["x"], loc["y"])
-                heading = f"page {loc['page']} {loc.get('grid', '')}  ({k + 1} of {len(locs)})"
-            elif m.get("page"):
-                png = render_page(self.pid_file, int(m["page"]))
-                heading = f"page {m['page']} (whole page - this item has no exact spot)"
-            else:
-                messagebox.showinfo("Location", "No drawing location is known for this item.", parent=self)
-                return
+            LocationViewer(self, self.pid_file, f"{name} - drawing", locs, int(m["page"]) if m.get("page") else None)
         except Exception as exc:
             messagebox.showerror("Location", f"Could not draw the P&ID: {exc}", parent=self)
-            return
-        win = tk.Toplevel(self)
-        win.title(f"{m.get('tag_id') if m.get('tag_id') not in (None, '-') else m.get('description')} - {heading}")
-        win.photo = tk.PhotoImage(data=base64.b64encode(png))
-        tk.Label(win, image=win.photo).pack()
-        tk.Label(win, text="Click 'Show on drawing' again for the next occurrence.", fg="gray").pack()
 
     def save(self):
         try:
