@@ -1,114 +1,49 @@
-# Engineering App - Local Development Setup
+# Setup
 
-## Prerequisites
-- Python 3.12
-- pip and venv
+## End users
+Download `JobManager.exe` (Windows) or `JobManager-macos.zip` (macOS) from the latest
+release and run it. No Python needed. See [`README.md`](README.md) for how to use it.
 
-## Quick Start
+## Developers
+
+Prerequisites: Python 3.12, git, and on Linux `python3-tk` (plus `xvfb` for headless GUI checks).
 
 ```bash
-# Create and activate virtual environment
-python3.12 -m venv .venv
-source .venv/bin/activate  # Windows: .venv\Scripts\activate
-
-# Install dependencies
+git clone https://github.com/MaddogSTD/engineering-app.git
+cd engineering-app
+python -m venv .venv
+source .venv/bin/activate         # Windows Git Bash: source .venv/Scripts/activate
+                                  # Windows cmd/PowerShell: .venv\Scripts\activate
 python -m pip install --upgrade pip
 pip install -r requirements.txt
-
-# Start the backend API
-uvicorn app.main:app --reload
 ```
 
-The API will be available at:
-- Root: http://localhost:8000/
-- Health: http://localhost:8000/api/health
-- Pipeline: http://localhost:8000/api/pipeline
-- Upload: POST http://localhost:8000/api/upload
-- Scan: POST http://localhost:8000/api/scan
-- Swagger UI: http://localhost:8000/docs
-- ReDoc: http://localhost:8000/redoc
+| Task | Command |
+| --- | --- |
+| Run the desktop app | `python run_gui.py` |
+| Run the tests | `python -m pytest tests -q` |
+| Headless self-test | `python run_gui.py --selftest` (Linux: `xvfb-run -a python run_gui.py --selftest`) |
+| Build the app for this OS | `pip install pyinstaller && python build_exe.py` |
+| Run the optional HTTP API | `uvicorn app.main:app --reload` → <http://localhost:8000/docs> |
 
-## Testing Endpoints
+Each job keeps its files and a `bom_exports/` folder (`review.json`, PDF, CSV, JSON).
 
-### Health Check
-```bash
-curl http://localhost:8000/api/health
-```
+## Releasing
+1. Open a PR from a feature branch and merge it into `master`.
+2. Tag the merge: `git tag vX.Y.Z && git push origin vX.Y.Z`.
+3. GitHub Actions (`Build GUI`) stamps the version, builds and self-tests both apps, and publishes
+   `JobManager.exe` and `JobManager-macos.zip` to the release. Installed apps offer the update.
 
-### Upload a File
-```bash
-curl -X POST "http://localhost:8000/api/upload" \
-  -F "file=@path/to/sample.pdf"
-```
+The workflow needs a repository secret `UPDATE_TOKEN` (read-only, Contents: read) so installed
+apps of a private repository can check for updates.
 
-### Scan a File
-```bash
-curl -X POST "http://localhost:8000/api/scan" \
-  -F "file=@path/to/sample.pdf"
-```
-
-### Get Materials
-```bash
-curl http://localhost:8000/api/materials
-```
-
-### Get Job Status
-```bash
-curl http://localhost:8000/api/jobs/job-0001
-```
-
-## File Upload
-
-Supported file types:
-- PDF (.pdf)
-- Images (.png, .jpg, .jpeg, .gif, .svg)
-
-Maximum file size: 25 MB
-
-Uploaded files are saved to: `backend/uploads/`
-
-## Environment Configuration
-
-Create a `.env` file to override defaults:
-
-```bash
-APP_NAME=engineering-app
-ENVIRONMENT=development
-UPLOAD_DIR=backend/uploads
-MAX_UPLOAD_SIZE_MB=25
-CORS_ORIGINS=["*"]
-```
-
-## Frontend
-
-Open the frontend dashboard:
-```bash
-open frontend/bom-generator.html
-```
-
-Or serve with Python:
-```bash
-python -m http.server 8080 --directory frontend
-```
-
-Then open: http://localhost:8080/frontend/bom-generator.html
+## Optional HTTP API
+Environment overrides (`.env`): `APP_NAME`, `ENVIRONMENT`, `UPLOAD_DIR` (default `backend/uploads`),
+`MAX_UPLOAD_SIZE_MB` (25), `CORS_ORIGINS`. Docker: `docker build -t engineering-app .` then
+`docker run --rm -p 8000:8000 engineering-app`.
 
 ## Troubleshooting
-
-**Port 8000 already in use:**
-```bash
-uvicorn app.main:app --reload --port 8001
-```
-
-**ModuleNotFoundError:**
-- Ensure virtual environment is activated
-- Re-run: `pip install -r requirements.txt`
-
-**File upload fails:**
-- Check that `backend/uploads/` directory exists and is writable
-- Verify file size is under 25 MB
-- Ensure file extension is supported
-
-## Next Steps
-
-See `IMPLEMENTATION_ROADMAP.md` for the full Phase 1 and Phase 2 implementation plan.
+- **`ModuleNotFoundError`** – activate the virtual environment and re-run `pip install -r requirements.txt`.
+- **Tk errors on Linux** – install `python3-tk`.
+- **"Failed to load Python DLL" after an update** – fixed in v0.1.5; if you are on an older
+  version, download the latest `JobManager.exe` once by hand.
