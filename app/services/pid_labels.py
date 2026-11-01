@@ -32,8 +32,14 @@ LABEL_NAMES = {
     "PAL": "Pressure Alarm Low", "TSH": "Temperature Switch High", "FSL": "Flow Switch Low",
     "FSH": "Flow Switch High",
 }
+from app.services.vocabulary import VOCAB  # noqa: E402
+
+LABEL_CODES |= set(VOCAB["codes"])
+LABEL_NAMES.update(VOCAB["codes"])
 NOISE = {"PSIG", "NC", "NO", "ON", "CN", "OFF", "CS", "SS", "CSO", "B", "FOR", "OPERATION", "HG", "TEST",
-         "XX", "SC", "OSC", "TANK", "NPT", "UL", "GAL", "MD", "OIL", "ROOM", "RM", "XXX", "GY", "POT"}
+         "XX", "SC", "OSC", "TANK", "NPT", "UL", "GAL", "OIL", "ROOM", "RM", "XXX"} | VOCAB["ignore_prefixes"]
+_NOT_TAGS = {"SCH", "NPS", "DWG", "REV", "PSI", "GPM", "ASME", "ANSI", "API", "NFPA", "AWS", "ASTM", "SHEET",
+             "RPM", "TDH", "HP", "KW", "NPSH", "BHP", "CFM", "GPH", "PSIG", "NOTE", "ISO", "TYP", "MAX", "MIN", "DIA", "SIZE", "PAGE", "ITEM", "LINE", "TAG", "NO", "DATE"}
 _DASHED = re.compile(r"^([A-Z]{1,6})-(\d{1,4}[A-Z]?)$")
 _CODE = re.compile(r"^[A-Z]{2,5}$")
 _NUM = re.compile(r"^\d{1,4}[A-Z]?$")
@@ -162,6 +168,10 @@ def scan_page_labels(page, *, allowed_prefixes: set, label_codes: set, decode_ok
                     and 0 <= nxt["x0"] - w["x1"] < 25 and (text in allowed_prefixes or text in label_codes)):
                 prefix, number = text, nxt["text"]
                 skip_next = True
+            elif (nxt and len(nxt["text"]) >= 3 and _NUM.match(nxt["text"]) and abs(nxt["top"] - w["top"]) < 6
+                  and 0 <= nxt["x0"] - w["x1"] < 25 and text not in allowed_prefixes
+                  and text not in label_codes and text not in _NOT_TAGS and not decode_ok(text)):
+                unrecognised.append(f"{text}-{nxt['text']}")  # unknown code + number: ask rather than miss it
             elif text in label_codes or text in allowed_prefixes:
                 below = [x for x in words if _NUM.match(x["text"]) and 0 < x["top"] - w["bottom"] < 14
                          and abs((x["x0"] + x["x1"]) / 2 - (w["x0"] + w["x1"]) / 2) < 14 and len(x["text"]) >= 3]

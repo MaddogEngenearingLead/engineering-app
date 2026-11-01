@@ -14,25 +14,29 @@ except ImportError:
 VALID_PREFIXES = {
     # Tanks and vessels
     "TK", "E", "V",
-    # Pumps (multi-letter only to avoid false positives)
-    "JFSP", "JFLP", "C",
+    "C",
     # Valves (multi-letter)
     "MOV", "PRV", "TRV", "PV", "POV",
     # Vents and drains
     "EV", "HPV", "LPD",
     # Instrumentation
-    "LI", "PI", "PS", "TI", "FI", "PE", "FE", "ME",
+    "LI", "PI", "PS", "TI", "FI", "PE", "FE",
     "LS", "LSL", "LSH", "LSHH",
-    # Other equipment
-    "FS", "POSP",
+    "FS",
 }
 
 # Denylist of false positives to explicitly exclude
 DENYLIST_PREFIXES = {
-    "MD", "CS", "CSO", "CN", "NO", "ON", "OIL", "ROOM", "RM", "FILL",
-    "SS", "OSC", "PSIG", "PLC", "JY", "MFXX", "UL", "MP", "DPL", "GAL",
+    "CS", "CSO", "CN", "NO", "ON", "OIL", "ROOM", "RM", "FILL",
+    "SS", "OSC", "PSIG", "PLC", "JY", "UL", "GAL",
     "PG", "POT", "XXX", "GY", "NC",
 }
+
+from app.services.vocabulary import VOCAB  # noqa: E402
+
+DENYLIST_PREFIXES |= VOCAB["ignore_prefixes"]
+VALID_PREFIXES |= set(VOCAB["codes"])
+DENYLIST_PREFIXES -= set(VOCAB["codes"])
 
 
 def extract_text_from_pdf(file_path: str) -> str:
@@ -79,11 +83,7 @@ def extract_words_with_coords(file_path: str) -> list[dict]:
 
 
 def pad_number(prefix: str, number: str) -> str:
-    """Zero-pad MOV numbers to 3 digits ('1A' -> '001A') for consistent deduplication."""
-    if prefix == "MOV":
-        m = re.match(r"(\d+)(\D*)$", number)
-        if m:
-            return m.group(1).zfill(3) + m.group(2)
+    """Tag numbers are kept as printed; deduplication ignores leading zeros elsewhere."""
     return number
 
 
@@ -138,10 +138,7 @@ def infer_equipment_type(prefix: str) -> str:
     prefix = prefix.upper()
 
     type_map = {
-        # Your drawing's primary equipment
         "TK": "tank",
-        "JFSP": "pump",
-        "JFLP": "pump",
         "MOV": "valve",
         "POV": "pilot_operated_valve",
 
@@ -165,11 +162,9 @@ def infer_equipment_type(prefix: str) -> str:
         "LSL": "level_switch_low",
         "LSH": "level_switch_high",
         "LSHH": "level_switch_high_high",
-        "ME": "measurement_element",
 
         # Other equipment
-        "FS": "filter_separator",
-        "POSP": "pump_outlet_shutoff_pressure",
+        "FS": "flow_switch",
 
         # Generic fallbacks
         "V": "valve",
