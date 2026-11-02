@@ -195,24 +195,25 @@ class JobManager:
         self._record_path(job_number, job_dir, "scope_file", file_path)
         return file_path
 
-    def add_job_files(self, job_number: str, pid_source: str, scope_source: str) -> dict:
+    def add_job_files(self, job_number: str, pid_source: str, scope_source: str | None = None) -> dict:
         """GUI "Create Job": copy the P&ID and scope into the job folders and write
         <uploads>/<job number>.json with their paths. Returns the job file data."""
         pid_src = Path(pid_source)
-        scope_src = Path(scope_source)
+        scope_src = Path(scope_source) if scope_source else None
         if not pid_src.is_file():
             raise FileNotFoundError(f"P&ID file not found: {pid_source}")
-        if not scope_src.is_file():
+        if scope_src and not scope_src.is_file():
             raise FileNotFoundError(f"Scope file not found: {scope_source}")
 
         job_dir, pid_dir, scope_dir, _ = self.get_or_create_job(job_number)
         pid_dest = pid_dir / self._sanitize_filename(pid_src.name)
-        scope_dest = scope_dir / self._sanitize_filename(scope_src.name)
         shutil.copy2(pid_src, pid_dest)
-        shutil.copy2(scope_src, scope_dest)
 
         self._record_path(job_number, job_dir, "pid_file", pid_dest)
-        self._record_path(job_number, job_dir, "scope_file", scope_dest)
+        if scope_src:
+            scope_dest = scope_dir / self._sanitize_filename(scope_src.name)
+            shutil.copy2(scope_src, scope_dest)
+            self._record_path(job_number, job_dir, "scope_file", scope_dest)
         data = self._load_json(self.job_file_path(job_number))
         data["job_file"] = str(self.job_file_path(job_number))
         logger.info(f"Job {job_number} created: {self.job_file_path(job_number)}")

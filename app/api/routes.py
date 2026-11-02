@@ -326,11 +326,7 @@ async def scan_job_pid(
         else:
             effective_scope = ""
 
-    if not effective_scope:
-        raise HTTPException(
-            status_code=400,
-            detail="No scope-of-work text provided. Please supply scope_of_work, scope_filename, or upload a scope file.",
-        )
+    # A scope of work is optional; without one the P&ID's own markup and notes drive the BOM.
 
     # Parse highlight mapping
     mapping = None
