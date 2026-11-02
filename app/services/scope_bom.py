@@ -273,6 +273,61 @@ def _dominant_colour_role(sig: dict, mapping: dict) -> str | None:
     return ranked[0][0]
 
 
+_INDEX_ROLE = (
+    (re.compile(r"\b(existing|demo\w*|removal|remove)\b", re.I), DEMO),
+    (re.compile(r"\b(proposed|new(?:\s+work|\s+installation)?)\b", re.I), NEW_WORK),
+)
+_INDEX_ID = re.compile(r"\b[A-Z]{1,5}[-.\s]?\d{1,4}[A-Z]?(?:[-.]\d+)*\b|\b\d{1,4}[-.][\w.-]+\b")
+
+
+def _line_role(line: str) -> str | None:
+    found = {role for pattern, role in _INDEX_ROLE if pattern.search(line)}
+    return found.pop() if len(found) == 1 else None
+
+
+def classify_by_index(sigs: list[dict]) -> dict[int, str]:
+    """Roles listed on the drawing index page ("Existing" -> demo, "Proposed" -> new work).
+
+    Each index row is tied to a page by its drawing/sheet number found on that page, then by
+    the row's page number, then by the row's title text. Returns ``{page: role}``.
+    """
+    best, best_rows = None, []
+    for s in sigs:
+        text = s.get("text") or ""
+        if not re.search(r"\b(index|drawing list|sheet list|list of drawings|drawing schedule)\b", text, re.I):
+            continue
+        rows = [(ln.strip(), _line_role(ln)) for ln in text.splitlines()]
+        rows = [(ln, role) for ln, role in rows if role]
+        if len(rows) > len(best_rows):
+            best, best_rows = s, rows
+    if not best or len(best_rows) < 2:
+        return {}
+    others = [s for s in sigs if s is not best]
+    roles: dict[int, str] = {}
+    for line, role in best_rows:
+        page = None
+        for ident in _INDEX_ID.findall(line.upper()):
+            hits = [s["page"] for s in others if re.search(rf"(?<![A-Z0-9]){re.escape(ident)}(?![A-Z0-9])",
+                                                           (s.get("text") or "").upper())]
+            if len(hits) == 1:
+                page = hits[0]
+                break
+        if page is None:
+            lead = re.match(r"^\D{0,6}(\d{1,3})\b", line)
+            if lead and 1 <= int(lead.group(1)) <= len(sigs) and int(lead.group(1)) != best["page"]:
+                page = int(lead.group(1))
+        if page is None:
+            title = re.sub(r"\b(existing|proposed|demo\w*|removal|remove|new|work|installation)\b|[\d\W]+", " ",
+                           line, flags=re.I).strip().upper()
+            if len(title) >= 6:
+                hits = [s["page"] for s in others if title in re.sub(r"\s+", " ", (s.get("text") or "").upper())]
+                if len(hits) == 1:
+                    page = hits[0]
+        if page is not None and page not in roles:
+            roles[page] = role
+    return roles
+
+
 def classify_signatures(sigs: list[dict], colour_meanings: dict | None = None) -> dict:
     """Classify pages: FreeText -> title -> Jaccard pairing -> colour tiebreak."""
     mapping = normalise_highlight_mapping(colour_meanings)
@@ -282,6 +337,9 @@ def classify_signatures(sigs: list[dict], colour_meanings: dict | None = None) -
         r = score_page_by_freetext(s.get("freetext", ""))
         if r["role"]:
             roles[s["page"]] = (r["role"], "freetext", 0.95)
+    for page, role in classify_by_index(sigs).items():
+        if page not in roles:
+            roles[page] = (role, "index", 0.9)
     for s in sigs:
         if s["page"] in roles:
             continue
@@ -317,7 +375,7 @@ def classify_signatures(sigs: list[dict], colour_meanings: dict | None = None) -
 
     demo = sorted(p for p, v in roles.items() if v[0] == DEMO)
     new = sorted(p for p, v in roles.items() if v[0] == NEW_WORK)
-    method_rank = ["freetext", "title", "jaccard_pairing", "colour_tiebreak"]
+    method_rank = ["freetext", "index", "title", "jaccard_pairing", "colour_tiebreak"]
     methods = {v[1] for v in roles.values()}
     method = next((m for m in method_rank if m in methods), None)
     confidence = round(min((v[2] for v in roles.values()), default=0.0), 2)
