@@ -6,6 +6,7 @@ import io
 import tkinter as tk
 from tkinter import messagebox, simpledialog, ttk
 
+from app.gui.scrolling import ScrollFrame
 from app.services.job_scan import load_review, save_review
 from app.services.review_questions import (apply_answer, build_questions, ensure_uids, undo_answer)
 
@@ -140,26 +141,28 @@ class QuestionDialog(tk.Toplevel):
         super().__init__(parent)
         self.q, self.result = q, None
         self.title("Question")
-        self.configure(padx=14, pady=12)
+        self.scroller = ScrollFrame(self, padx=14, pady=12)
+        self.scroller.pack(fill="both", expand=True)
+        self.body = self.scroller.body
         prev_in = (previous or {}).get("input") or {}
-        tk.Label(self, text=q["title"], font=("Arial", 12, "bold"), wraplength=620, justify="left"
+        tk.Label(self.body, text=q["title"], font=("Arial", 12, "bold"), wraplength=620, justify="left"
                  ).pack(anchor="w")
-        tk.Label(self, text=q["question"], wraplength=620, justify="left").pack(anchor="w", pady=(8, 4))
-        why = tk.LabelFrame(self, text="Why am I being asked?", padx=6, pady=4)
+        tk.Label(self.body, text=q["question"], wraplength=620, justify="left").pack(anchor="w", pady=(8, 4))
+        why = tk.LabelFrame(self.body, text="Why am I being asked?", padx=6, pady=4)
         why.pack(fill="x", pady=6)
         tk.Label(why, text=q["why"], wraplength=600, justify="left", fg="#444").pack(anchor="w")
         if q.get("locations"):
-            tk.Button(self, text=f"Show on drawing ({len(q['locations'])} location"
+            tk.Button(self.body, text=f"Show on drawing ({len(q['locations'])} location"
                                  f"{'s' if len(q['locations']) != 1 else ''})", relief="groove",
                       command=lambda: self._show(show_cb, q)).pack(anchor="w", pady=4)
 
         self.choice = tk.StringVar(value=prev_in.get("choice") or "")
         for value, label in q.get("choices", []):
-            tk.Radiobutton(self, text=label, variable=self.choice, value=value, justify="left",
+            tk.Radiobutton(self.body, text=label, variable=self.choice, value=value, justify="left",
                            wraplength=600).pack(anchor="w")
         self.checks = {}
         if q["kind"] == "checklist":
-            box = tk.Frame(self)
+            box = tk.Frame(self.body)
             box.pack(fill="x")
             for it in q["items"]:
                 var = tk.BooleanVar(value=it["tag"] in (prev_in.get("checks") or []))
@@ -170,19 +173,20 @@ class QuestionDialog(tk.Toplevel):
         self.fields = {}
         prev_fields = prev_in.get("fields") or {}
         for fld in q.get("fields", []):
-            row = tk.Frame(self)
+            row = tk.Frame(self.body)
             row.pack(fill="x", pady=2)
             tk.Label(row, text=fld["label"], width=48, anchor="w", wraplength=330, justify="left").pack(side="left")
             var = tk.StringVar(value=prev_fields.get(fld["key"], fld["default"]))
             tk.Entry(row, textvariable=var, width=30).pack(side="left")
             self.fields[fld["key"]] = var
-        tk.Label(self, text="Comment (optional, saved on the BOM):").pack(anchor="w", pady=(8, 0))
+        tk.Label(self.body, text="Comment (optional, saved on the BOM):").pack(anchor="w", pady=(8, 0))
         self.comment = tk.StringVar(value=prev_in.get("comment", ""))
-        tk.Entry(self, textvariable=self.comment, width=80).pack(anchor="w")
-        row = tk.Frame(self)
+        tk.Entry(self.body, textvariable=self.comment, width=80).pack(anchor="w")
+        row = tk.Frame(self.body)
         row.pack(fill="x", pady=(12, 0))
         tk.Button(row, text="Cancel", command=self.destroy).pack(side="right", padx=4)
         tk.Button(row, text="Apply answer", bg="#4CAF50", fg="white", command=self.ok).pack(side="right")
+        self.scroller.fit_to_content()
         self.transient(parent)
         self.viewer = None
         self.protocol("WM_DELETE_WINDOW", self.destroy)
@@ -242,6 +246,9 @@ class ReviewWindow(tk.Toplevel):
         self.jm, self.job_number, self.on_saved = jm, job_number, on_saved
         self.title(f"Review BOM - Job #{job_number}")
         self.geometry("1000x760")
+        self.scroller = ScrollFrame(self)
+        self.scroller.pack(fill="both", expand=True)
+        self.body = self.scroller.body
         review = load_review(jm, job_number)
         if not review:
             messagebox.showinfo("Review", "Generate the BOM first.", parent=parent)
@@ -261,12 +268,12 @@ class ReviewWindow(tk.Toplevel):
     def _build(self):
         s = self.result.get("summary") or {}
         if s:
-            tk.Label(self, text="  |  ".join(f"{k.replace('_', ' ')}: {v}" for k, v in s.items()
+            tk.Label(self.body, text="  |  ".join(f"{k.replace('_', ' ')}: {v}" for k, v in s.items()
                                               if isinstance(v, (int, str))),
                      fg="gray", wraplength=960, justify="left").pack(anchor="w", padx=8, pady=(8, 0))
 
         cols = ("n", "tag", "desc", "qty", "loc", "basis")
-        self.tree = ttk.Treeview(self, columns=cols, show="headings", height=10, selectmode="browse")
+        self.tree = ttk.Treeview(self.body, columns=cols, show="headings", height=10, selectmode="browse")
         for c, label, w in (("n", "#", 35), ("tag", "Tag", 90), ("desc", "Description", 250),
                             ("qty", "Qty", 45), ("loc", "Location (page / grid)", 220),
                             ("basis", "Why it is on the BOM", 330)):
@@ -275,28 +282,28 @@ class ReviewWindow(tk.Toplevel):
         self.tree.pack(fill="both", expand=True, padx=8, pady=6)
         self.tree.bind("<Double-1>", lambda _e: self.edit_item())
 
-        bar = tk.Frame(self)
+        bar = tk.Frame(self.body)
         bar.pack(fill="x", padx=8)
         for text, cmd in (("Show on drawing", self.show_location), ("Edit", self.edit_item),
                           ("Remove", self.remove_item), ("Add item", self.add_item)):
             tk.Button(bar, text=text, command=cmd, relief="groove").pack(side="left", padx=(0, 6))
 
-        self.q_title = tk.Label(self, font=("Arial", 10, "bold"))
+        self.q_title = tk.Label(self.body, font=("Arial", 10, "bold"))
         self.q_title.pack(anchor="w", padx=8, pady=(10, 2))
-        self.flags = tk.Listbox(self, height=7)
+        self.flags = tk.Listbox(self.body, height=7)
         self.flags.pack(fill="x", padx=8)
         self.flags.bind("<Double-1>", lambda _e: self.answer_flag())
-        tk.Button(self, text="Answer selected question", command=self.answer_flag, relief="groove"
+        tk.Button(self.body, text="Answer selected question", command=self.answer_flag, relief="groove"
                   ).pack(anchor="w", padx=8, pady=3)
         self._fill_questions()
 
-        tk.Label(self, text="Clarifications (saved on the BOM):", font=("Arial", 10, "bold")
+        tk.Label(self.body, text="Clarifications (saved on the BOM):", font=("Arial", 10, "bold")
                  ).pack(anchor="w", padx=8, pady=(10, 2))
-        self.notes = tk.Listbox(self, height=4)
+        self.notes = tk.Listbox(self.body, height=4)
         self.notes.pack(fill="x", padx=8)
         for n in self.clarifications:
             self.notes.insert("end", n)
-        bar2 = tk.Frame(self)
+        bar2 = tk.Frame(self.body)
         bar2.pack(fill="x", padx=8, pady=8)
         tk.Button(bar2, text="Add clarification note", command=self.add_note, relief="groove").pack(side="left")
         tk.Button(bar2, text="Save and re-export BOM", command=self.save, bg="#4CAF50", fg="white"

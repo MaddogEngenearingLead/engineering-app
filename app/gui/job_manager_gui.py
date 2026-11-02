@@ -21,6 +21,7 @@ from tkinterdnd2 import DND_FILES, TkinterDnD
 
 from app.job_manager import JobManager
 from app.gui.review_window import ReviewWindow
+from app.gui.scrolling import ScrollFrame
 from app.services.job_scan import run_job_scan
 from app.services.updater import (
     UpdateInfo, apply_update, can_self_update, check_for_update, check_for_update_status, download_update,
@@ -96,7 +97,9 @@ class JobManagerApp(TkinterDnD.Tk):
         super().__init__()
         self.title(f"Job Manager App v{__version__}")
         self.geometry("640x500")
-        self.configure(padx=20, pady=20)
+        self.scroller = ScrollFrame(self, padx=20, pady=20)
+        self.scroller.pack(side="bottom", fill="both", expand=True)
+        self.body = self.scroller.body
         self.jobs = JobManager(get_upload_dir())
         self.running: set[str] = set()
         self.update_info: UpdateInfo | None = None
@@ -105,7 +108,7 @@ class JobManagerApp(TkinterDnD.Tk):
         threading.Thread(target=self._check_updates, daemon=True).start()
 
     def clear_screen(self):
-        for widget in self.winfo_children():
+        for widget in self.body.winfo_children():
             widget.destroy()
         self._render_update_banner()
 
@@ -156,13 +159,7 @@ class JobManagerApp(TkinterDnD.Tk):
         elif can_self_update():
             tk.Button(banner, text="Update now", command=self.start_update,
                       relief="groove").pack(side="right")
-        banner.pack(side="top", fill="x", pady=(0, 10), before=self._first_non_banner())
-
-    def _first_non_banner(self):
-        for widget in self.pack_slaves():
-            if not getattr(widget, "is_update_banner", False):
-                return widget
-        return None
+        banner.pack(side="top", fill="x", padx=20, pady=(10, 0), before=self.scroller)
 
     def start_update(self):
         if self.updating or not self.update_info:
@@ -197,18 +194,18 @@ class JobManagerApp(TkinterDnD.Tk):
 
     def show_dashboard(self):
         self.clear_screen()
-        header = tk.Frame(self)
+        header = tk.Frame(self.body)
         header.pack(fill="x", pady=(0, 10))
         tk.Label(header, text="Dashboard", font=("Arial", 18, "bold")).pack(side="left")
         tk.Button(header, text="AI settings", command=lambda: AISettingsWindow(self),
                   relief="groove").pack(side="right", padx=(0, 6))
         tk.Button(header, text="Check for updates", command=self.check_updates_manually,
                   relief="groove").pack(side="right")
-        tk.Button(self, text="+ Start a New Job", command=self.open_new_job_window,
+        tk.Button(self.body, text="+ Start a New Job", command=self.open_new_job_window,
                   width=20, bg="#2196F3", fg="white").pack(pady=10)
-        tk.Label(self, text="Your Jobs (click a job to generate its BOM):",
+        tk.Label(self.body, text="Your Jobs (click a job to generate its BOM):",
                  font=("Arial", 12, "bold")).pack(anchor="w", pady=(10, 5))
-        jobs_frame = tk.Frame(self)
+        jobs_frame = tk.Frame(self.body)
         jobs_frame.pack(fill="both", expand=True)
 
         jobs = self.jobs.list_jobs()
@@ -326,33 +323,34 @@ class AISettingsWindow(tk.Toplevel):
         self.ai = ai_review
         self.settings = ai_review.load_settings()
         self.title("AI settings")
-        self.configure(padx=20, pady=20)
-        self.resizable(False, False)
+        self.scroller = ScrollFrame(self, padx=20, pady=20)
+        self.scroller.pack(fill="both", expand=True)
+        self.body = self.scroller.body
         self.enabled = tk.BooleanVar(value=bool(self.settings.get("enabled")))
-        tk.Checkbutton(self, text="Use AI to double-check the BOM when it is generated",
+        tk.Checkbutton(self.body, text="Use AI to double-check the BOM when it is generated",
                        variable=self.enabled).pack(anchor="w")
-        tk.Label(self, text="Provider:").pack(anchor="w", pady=(12, 0))
+        tk.Label(self.body, text="Provider:").pack(anchor="w", pady=(12, 0))
         self.labels = {cls.label: name for name, cls in ai_review.PROVIDERS.items()}
-        self.provider = ttk.Combobox(self, values=list(self.labels), state="readonly", width=44)
+        self.provider = ttk.Combobox(self.body, values=list(self.labels), state="readonly", width=44)
         current = next((l for l, n in self.labels.items() if n == self.settings.get("provider")),
                        next(iter(self.labels)))
         self.provider.set(current)
         self.provider.pack(anchor="w")
-        tk.Label(self, text="API key:").pack(anchor="w", pady=(12, 0))
-        self.key = tk.Entry(self, width=48, show="*")
+        tk.Label(self.body, text="API key:").pack(anchor="w", pady=(12, 0))
+        self.key = tk.Entry(self.body, width=48, show="*")
         self.key.insert(0, self.settings.get("api_key", ""))
         self.key.pack(anchor="w")
-        tk.Label(self, text="Model (leave blank for the default; change if Google retires it):"
+        tk.Label(self.body, text="Model (leave blank for the default; change if Google retires it):"
                  ).pack(anchor="w", pady=(12, 0))
-        self.model = tk.Entry(self, width=48)
+        self.model = tk.Entry(self.body, width=48)
         self.model.insert(0, (self.settings.get("models") or {}).get(self.settings.get("provider"), ""))
         self.model.pack(anchor="w")
-        tk.Label(self, justify="left", fg="#555", text=(
+        tk.Label(self.body, justify="left", fg="#555", text=(
             "Get a free Gemini key at aistudio.google.com/apikey.\n"
             "When on, the drawing pages and scope are sent to the provider.\n"
             "AI findings appear as questions; nothing changes unless you approve it.")
         ).pack(anchor="w", pady=(10, 0))
-        row = tk.Frame(self)
+        row = tk.Frame(self.body)
         row.pack(anchor="e", pady=(14, 0))
         tk.Button(row, text="Cancel", command=self.destroy, width=10).pack(side="right", padx=(6, 0))
         tk.Button(row, text="Save", command=self.save, width=10, bg="#2196F3", fg="white").pack(side="right")
@@ -379,25 +377,27 @@ class NewJobWindow(tk.Toplevel):
         self.parent = parent
         self.title("New Job")
         self.geometry("450x400")
-        self.configure(padx=20, pady=20)
+        self.scroller = ScrollFrame(self, padx=20, pady=20)
+        self.scroller.pack(fill="both", expand=True)
+        self.body = self.scroller.body
         self.files: dict[str, str] = dict(files or {})
 
-        tk.Label(self, text="Job Number:").pack(anchor="w")
-        self.job_number_entry = tk.Entry(self, width=40)
+        tk.Label(self.body, text="Job Number:").pack(anchor="w")
+        self.job_number_entry = tk.Entry(self.body, width=40)
         self.job_number_entry.pack(pady=5)
         self.job_number_entry.insert(0, job_number)
         self.job_number_entry.focus_set()
 
         self.pid_label = self._drop_area("P&ID File", "pid")
-        self.scope_label = self._drop_area("Scope File", "scope")
+        self.scope_label = self._drop_area("Scope File (optional)", "scope")
 
-        tk.Button(self, text="Create Job", command=self.submit, width=20,
+        tk.Button(self.body, text="Create Job", command=self.submit, width=20,
                   bg="#4CAF50", fg="white").pack(pady=10)
 
     def _drop_area(self, title: str, key: str) -> tk.Label:
-        tk.Label(self, text=f"{title}:").pack(anchor="w", pady=(10, 0))
+        tk.Label(self.body, text=f"{title}:").pack(anchor="w", pady=(10, 0))
         current = self.files.get(key)
-        area = tk.Label(self, text=current or f"Drag & drop {title} here", relief="groove",
+        area = tk.Label(self.body, text=current or f"Drag & drop {title} here", relief="groove",
                         bd=2, height=4, bg="#f0f0f0", wraplength=380)
         area.pack(fill="x", pady=5)
         area.drop_target_register(DND_FILES)
@@ -420,12 +420,12 @@ class NewJobWindow(tk.Toplevel):
             self.destroy()
             parent.open_new_job_window(files=files)
             return
-        if "pid" not in self.files or "scope" not in self.files:
-            messagebox.showerror("Error", "Provide both the P&ID file and the Scope file.")
+        if "pid" not in self.files:
+            messagebox.showerror("Error", "Provide the P&ID file.")
             return
         try:
             data = self.parent.jobs.add_job_files(
-                job_number, self.files["pid"], self.files["scope"]
+                job_number, self.files["pid"], self.files.get("scope")
             )
         except (OSError, ValueError) as exc:
             messagebox.showerror("Error", f"Could not create job: {exc}")
@@ -433,7 +433,7 @@ class NewJobWindow(tk.Toplevel):
         messagebox.showinfo(
             "Job Created",
             f"Job {job_number} created.\n\nJob file: {data.get('job_file')}\n"
-            f"P&ID: {data.get('pid_file')}\nScope: {data.get('scope_file')}\n\n"
+            f"P&ID: {data.get('pid_file')}\nScope: {data.get('scope_file') or 'none (taken from the P&ID)'}\n\n"
             "Click the job on the dashboard to generate its BOM.",
         )
         self.parent.show_dashboard()

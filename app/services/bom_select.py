@@ -240,7 +240,8 @@ def _mentioned(scope_text: str, m: dict) -> bool:
 
 
 def select_items(pdf, by_page, demo, new, *, legend, abbreviations, symbol_legend, colour_scheme,
-                 scope_text, describe_tag, legend_prefixes, meaning_of, new_work, scope_match) -> dict:
+                 scope_text, describe_tag, legend_prefixes, meaning_of, new_work, scope_match,
+                 embedded_scope: str = "") -> dict:
     first = legend["instrument_key"]["first_letters"]
     succ = legend["instrument_key"]["succeeding_letters"]
     not_tags = {"SCH", "NPS", "DWG", "REV", "PSI", "GPM", "ASME", "ANSI", "API", "NFPA", "AWS", "ASTM", "SHEET",
@@ -390,7 +391,7 @@ def select_items(pdf, by_page, demo, new, *, legend, abbreviations, symbol_legen
     locators = {p: grid_locator(pdf.pages[p - 1]) for p in new}
     page_text = {p: _page_text(pdf.pages[p - 1], by_page.get(p)) for p in new}
     page_title = {p: (page_text[p].split("INSTALLATION DRAWING", 1) + [""])[1][:80] for p in new}
-    for si in scope_items(scope_text or ""):
+    for si in scope_items(scope_text or embedded_scope or ""):
         name = re.sub(r'^[\d\-/"½¼¾# ]+', "", si["description"]).strip()
         codes = _codes_for_scope_name(name, code_names)
         on_drawing = sum(drawing_by_code.get(c, 0) for c in codes) if codes else 0

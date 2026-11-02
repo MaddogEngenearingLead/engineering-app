@@ -624,6 +624,23 @@ def scope_match(scope_text: str, tag: str, description: dict | None) -> str | No
     return None
 
 
+_EMBEDDED_VERB = re.compile(r"\b(install|provide|furnish|supply|replace with|new)\b", re.I)
+
+
+def embedded_scope_text(by_page: dict, new_pages: list[int]) -> str:
+    """Scope-like instructions printed on the new-work pages (notes, "install new ..." lines).
+
+    Used as a reference when no scope-of-work file exists; formatted so ``scope_items`` reads it.
+    """
+    lines = []
+    for p in new_pages:
+        for raw in ((by_page.get(p) or {}).get("text") or "").splitlines():
+            line = raw.strip()
+            if 12 <= len(line) <= 300 and _EMBEDDED_VERB.search(line) and line not in lines:
+                lines.append(line)
+    return "Installation:\n" + "\n".join(lines) if lines else ""
+
+
 _MARKUP_NOISE = {"XX", "B", "PSIG", "NC", "NO", "ON", "CS", "SS", "CSO", "SC", "OSC", "CN", "FOR", "OPERATION", "PG", "TEST"}
 
 
@@ -747,10 +764,16 @@ def build_scoped_bom(
         for key, meaning in mapping.items():
             colour_scheme[key] = {"meaning": meaning, "confidence": 1.0}
 
+        embedded_scope = "" if (scope_text or "").strip() else embedded_scope_text(by_page, new)
+        if embedded_scope:
+            flags.append({"type": "scope_from_pid", "severity": "info",
+                          "message": "No scope file supplied; scope-like notes found on the new-work pages "
+                                     "were used as a reference."})
+
         # 4-6. decide what is needed: new-work markup + scope of work (see bom_select)
         selection = select_items(
             pdf, by_page, demo, new, legend=legend, abbreviations=abbreviations, symbol_legend=symbol_legend,
-            colour_scheme=colour_scheme, scope_text=scope_text, describe_tag=describe_tag,
+            colour_scheme=colour_scheme, scope_text=scope_text, embedded_scope=embedded_scope, describe_tag=describe_tag,
             legend_prefixes=legend_prefixes, meaning_of=_meaning_of, new_work=NEW_WORK, scope_match=scope_match)
         materials, tag_infos = selection["materials"], selection["tag_infos"]
         excluded, summary = selection["excluded"], selection["summary"]

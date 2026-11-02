@@ -126,14 +126,15 @@ def run_job_scan(jm: JobManager, job_number: str, demo_pages: list[int] | None =
         scope_files = jm.get_scope_files(job_number)
         if not pid_files:
             return {"status": "error", "message": "No P&ID file found for this job."}
-        if not scope_files:
-            return {"status": "error", "message": "No scope file found for this job."}
-        pid_path, scope_path = pid_files[0], scope_files[0]
+        pid_path = pid_files[0]
 
-        scope_text = FileDetector().extract_text_from_file(scope_path)
-        if not scope_text:
-            return {"status": "error",
-                    "message": f"Could not read any text from scope file {scope_path.name}."}
+        # The scope is optional; without one the scan relies on the P&ID itself.
+        scope_text = ""
+        if scope_files:
+            scope_text = FileDetector().extract_text_from_file(scope_files[0]) or ""
+            if not scope_text:
+                return {"status": "error",
+                        "message": f"Could not read any text from scope file {scope_files[0].name}."}
 
         _store(jm, job_number, {"bom_status": "running"})
 
