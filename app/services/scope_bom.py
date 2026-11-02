@@ -12,6 +12,7 @@ Single pipeline (see ``build_scoped_bom``):
 from __future__ import annotations
 
 import json
+import logging
 import re
 from collections import Counter
 from pathlib import Path
@@ -30,6 +31,8 @@ from app.services.pid_extraction import (
 )
 from app.services.bom_select import select_items
 from app.services.pid_markup import markup_items, parse_symbol_legend
+
+logger = logging.getLogger(__name__)
 
 DEMO = "demo"
 NEW_WORK = "new_work"
@@ -727,6 +730,23 @@ def unidentified_tags(text: str, known: set) -> list[str]:
 # Orchestration
 # --------------------------------------------------------------------------
 
+def _classify_with_ai(pdf_path: str, demo: list[int], new: list[int]):
+    """Fall back to the optional AI to read the index; returns (demo, new, note) or the inputs unchanged."""
+    try:
+        from app.services import ai_review
+
+        if not ai_review.is_enabled():
+            return demo, new, None
+        found = ai_review.classify_pages_with_ai(pdf_path)
+    except Exception as exc:
+        logger.warning("AI page classification skipped: %s", exc)
+        return demo, new, None
+    if not found["demo_pages"] or not found["new_work_pages"]:
+        return demo, new, None
+    note = "AI read the drawing index" + (f" (page {found['index_page']})" if found["index_page"] else "")
+    return found["demo_pages"], found["new_work_pages"], f"{note}: {found['summary']}".strip(": ")
+
+
 def _clarification(questions: list[dict]) -> dict:
     return {"status": "needs_clarification", "questions": questions}
 
@@ -762,6 +782,7 @@ def build_scoped_bom(
         # 1. page classification (overrides win)
         mapping = normalise_highlight_mapping(highlight_mapping)
         auto = classify_signatures(sigs, mapping)
+        ai_note = None
         if demo_pages or new_work_pages:
             demo = _pages_in_range(demo_pages, n_pages)
             new = _pages_in_range(new_work_pages, n_pages)
@@ -774,6 +795,10 @@ def build_scoped_bom(
             demo, new = auto["demo_pages"], auto["new_work_pages"]
             method, confidence = auto["classification_method"], auto["classification_confidence"]
             if auto["ambiguous"]:
+                demo, new, ai_note = _classify_with_ai(pdf_path, demo, new)
+                if ai_note:
+                    method, confidence = "ai_index", 0.8
+            if auto["ambiguous"] and not ai_note:
                 return _clarification([{
                     "type": "demo_work_pages_ambiguous",
                     "message": "Could not determine which pages are demo and which are new work.",
@@ -791,6 +816,8 @@ def build_scoped_bom(
 
         # 2. legend / instrument key
         flags: list[dict] = []
+        if ai_note:
+            flags.append({"type": "pages_from_ai", "severity": "info", "message": ai_note})
         for page_no in _no_text_pages(sigs):
             flags.append({"type": "no_text_layer", "severity": "warning", "page": page_no,
                           "message": f"Page {page_no} has no readable text (scanned image?). "

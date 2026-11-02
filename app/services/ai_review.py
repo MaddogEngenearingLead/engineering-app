@@ -146,7 +146,7 @@ def is_enabled() -> bool:
 
 # ---------------------------------------------------------------- review
 
-def render_pages(pdf_path: str, limit: int = MAX_PAGES) -> list[bytes]:
+def render_pages(pdf_path: str, limit: int = MAX_PAGES, max_pixels: int = MAX_PIXELS) -> list[bytes]:
     import pypdfium2 as pdfium
 
     pdf = pdfium.PdfDocument(pdf_path)
@@ -155,7 +155,7 @@ def render_pages(pdf_path: str, limit: int = MAX_PAGES) -> list[bytes]:
         for i in range(min(len(pdf), limit)):
             page = pdf[i]
             w, h = page.get_size()
-            image = page.render(scale=min(3.0, MAX_PIXELS / max(w, h))).to_pil().convert("RGB")
+            image = page.render(scale=min(3.0, max_pixels / max(w, h))).to_pil().convert("RGB")
             buf = io.BytesIO()
             image.save(buf, "PNG", optimize=True)
             out.append(buf.getvalue())
@@ -188,6 +188,46 @@ Reply with JSON only:
  "summary": "<one or two plain sentences>",
  "missing": [{{"tag": "<tag or empty>", "description": "<item>", "quantity": <number>, "page": <number or null>, "reason": "<why>"}}],
  "not_needed": [{{"tag": "<tag as in BOM>", "reason": "<why>"}}]}}"""
+
+
+CLASSIFY_PROMPT = """You are reading a P&ID drawing set of {n} pages, attached in order (page 1 first).
+Find the drawing index / sheet list (it may be on any page, often the first). Each drawing on it is
+marked either EXISTING (demolition / to be removed) or PROPOSED (new work). Use the index, plus the
+page titles, stamps and notes on each page, to decide which pages are demo (existing) and which are
+new work (proposed). Pages that are neither (index, legend, notes) go in neither list.
+Only use what you can read. If you cannot tell, leave the page out.
+
+Reply with JSON only:
+{{"index_page": <page number or null>, "demo_pages": [<page numbers>], "new_work_pages": [<page numbers>],
+ "summary": "<one plain sentence>"}}"""
+
+
+def classify_pages_with_ai(pdf_path: str, provider: Provider | None = None) -> dict:
+    """Ask the AI which pages are demo (existing) and which are new work (proposed).
+
+    Returns {"demo_pages": [...], "new_work_pages": [...], "index_page": int|None, "summary": str}
+    with 1-based, de-duplicated, in-range page numbers.
+    """
+    provider = provider or get_provider()
+    images = render_pages(pdf_path, limit=40, max_pixels=1600)
+    if not images:
+        raise AIError("The drawing has no pages to read.")
+    reply = parse_reply(provider.generate(CLASSIFY_PROMPT.format(n=len(images)), images))
+
+    def pages(key):
+        out = []
+        for p in reply.get(key) or []:
+            if isinstance(p, int) and 1 <= p <= len(images) and p not in out:
+                out.append(p)
+        return sorted(out)
+
+    demo, new = pages("demo_pages"), pages("new_work_pages")
+    both = set(demo) & set(new)
+    demo, new = [p for p in demo if p not in both], [p for p in new if p not in both]
+    index_page = reply.get("index_page")
+    return {"demo_pages": demo, "new_work_pages": new,
+            "index_page": index_page if isinstance(index_page, int) else None,
+            "summary": str(reply.get("summary") or "")[:300]}
 
 
 def _bom_text(materials: list[dict]) -> str:
