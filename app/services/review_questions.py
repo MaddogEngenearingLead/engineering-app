@@ -32,6 +32,16 @@ def _loc_text(f: dict) -> str:
     return f.get("location") or ""
 
 
+def _item_locations(items: list[dict], tag_key: str = "tag") -> list[dict]:
+    locations = []
+    for item in items:
+        name = " - ".join(str(part) for part in (item.get(tag_key), item.get("description"))
+                          if part and part != "-")
+        for loc in item.get("locations") or []:
+            locations.append({**loc, "review_item": name, "review_reason": item.get("reason") or ""})
+    return locations
+
+
 def build_questions(flags: list[dict], materials: list[dict]) -> list[dict]:
     """Questions for every flag worth asking about; ids are stable (flag index + type)."""
     qs: list[dict] = []
@@ -50,7 +60,7 @@ def _question(i: int, f: dict, materials: list[dict]) -> dict | None:
 
     if t == "named_in_scope_but_existing":
         item = f["items"][0]
-        return {**base, "kind": "choice", "locations": item["locations"], "items": f["items"],
+        return {**base, "kind": "choice", "locations": _item_locations([item]), "items": f["items"],
                 "title": f"{f['tag']}: in the scope, but drawn as existing",
                 "question": f"The scope of work mentions {f['tag']} ({item['description']}), but on the new-work "
                             f"drawing it is grey, which means existing equipment. Is work required on it "
@@ -62,7 +72,7 @@ def _question(i: int, f: dict, materials: list[dict]) -> dict | None:
 
     if t == "new_work_not_in_scope":
         return {**base, "kind": "checklist", "items": f["items"],
-                "locations": [l for it in f["items"] for l in it["locations"]],
+                "locations": _item_locations(f["items"]),
                 "title": f"New-work items not in the scope ({len(f['items'])})",
                 "question": "These items are marked as new work on the drawing, but the scope of work doesn't "
                             "call for them: it never mentions them, or only uses them as a location or reference "
@@ -76,7 +86,7 @@ def _question(i: int, f: dict, materials: list[dict]) -> dict | None:
         missing = t == "ai_missing_items"
         notes = "\n".join(f"- {it['tag']}: {it.get('reason') or 'no reason given'}" for it in f["items"])
         return {**base, "kind": "checklist", "items": f["items"],
-                "locations": [l for it in f["items"] for l in it["locations"]],
+                "locations": _item_locations(f["items"]),
                 "title": ("AI: items the scope needs but the BOM lacks" if missing
                           else "AI: BOM items the scope may not need") + f" ({len(f['items'])})",
                 "question": ("The AI review thinks the scope of work calls for these items, which are not on the "
@@ -91,7 +101,7 @@ def _question(i: int, f: dict, materials: list[dict]) -> dict | None:
         future = t == "future_items_excluded"
         what = "inside blue 'future work' clouds" if future else "drawn as existing (grey)"
         return {**base, "kind": "checklist", "items": f["items"],
-                "locations": [l for it in f["items"] for l in it["locations"]],
+                "locations": _item_locations(f["items"]),
                 "title": ("Future-work items left off" if future else "Existing items left off")
                          + f" ({len(f['items'])})",
                 "question": f"These items are {what}, so they were left off the BOM. Tick any that are actually "
@@ -131,7 +141,7 @@ def _question(i: int, f: dict, materials: list[dict]) -> dict | None:
         rows = [m for m in materials if m.get("type") == "piping"]
         if not rows:
             return None
-        return {**base, "kind": "form", "locations": [l for m in rows for l in m.get("locations", [])],
+        return {**base, "kind": "form", "locations": _item_locations(rows, "tag_id"),
                 "title": "Piping lengths needed",
                 "question": "Highlighted new piping is listed as runs, not footage. Enter the total length (feet) "
                             "for each size. Leave blank to keep it as a run count.",
@@ -144,6 +154,8 @@ def _question(i: int, f: dict, materials: list[dict]) -> dict | None:
     if t == "unidentified_tags":
         tags = f.get("tags") or []
         return {**base, "kind": "form", "title": f"Unrecognised tags ({len(tags)})",
+                "locations": [{**loc, "review_item": loc["tag"]}
+                              for loc in f.get("locations", []) if loc.get("tag") in tags],
                 "question": "These tag-like labels on the new-work pages weren't recognised by the legend. If one "
                             "is real equipment, enter what it is to add it to the BOM; leave blank to ignore it.",
                 "why": "Their prefix isn't in the legend, the instrument key or the standard code list, so the scan "
@@ -238,7 +250,12 @@ def apply_answer(materials: list[dict], q: dict, answer: dict) -> dict:
     elif q["flag_type"] == "unidentified_tags":
         for tag, desc in fields.items():
             if desc.strip():
+                locs = [{k: loc[k] for k in ("page", "x", "y", "grid") if k in loc}
+                        for loc in q.get("locations", []) if loc.get("tag") == tag]
+                from app.services.bom_select import location_text
                 add(_new_item(q, tag_id=tag, description=desc.strip(), type="equipment", quantity=1,
+                              locations=locs, location=location_text(locs),
+                              pages=",".join(map(str, sorted({loc["page"] for loc in locs}))),
                               basis="added after review: tag not recognised by the scan, identified by user"))
 
     answer_text = dict(q.get("choices") or []).get(choice, "")

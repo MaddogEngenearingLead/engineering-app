@@ -391,9 +391,11 @@ class AISettingsWindow(tk.Toplevel):
         self.base_url = tk.Entry(self.body, width=48)
         self.base_url.insert(0, (self.settings.get("base_urls") or {}).get(self.active_provider, ""))
         self.base_url.pack(anchor="w")
+        self._set_endpoint_state()
         self.provider.bind("<<ComboboxSelected>>", self._change_provider)
         tk.Label(self.body, justify="left", fg="#555", text=(
             "Each provider needs its own API key and vision-capable model.\n"
+            "Grok, Groq, Mistral, OpenRouter and Together require a model ID.\n"
             "When enabled, drawing pages and scope are sent to the selected provider.\n"
             "AI-transcribed BOM rows are provisional and must be checked.")
         ).pack(anchor="w", pady=(10, 0))
@@ -415,9 +417,14 @@ class AISettingsWindow(tk.Toplevel):
     def _change_provider(self, _event=None):
         self._remember_fields()
         self.active_provider = self.labels[self.provider.get()]
+        self.base_url.configure(state="normal")
         for widget, field in ((self.key, "api_keys"), (self.model, "models"), (self.base_url, "base_urls")):
             widget.delete(0, "end")
             widget.insert(0, (self.settings.get(field) or {}).get(self.active_provider, ""))
+        self._set_endpoint_state()
+
+    def _set_endpoint_state(self):
+        self.base_url.configure(state="normal" if self.active_provider == "openai_compatible" else "disabled")
 
     def save(self):
         key = self.key.get().strip()
@@ -427,6 +434,10 @@ class AISettingsWindow(tk.Toplevel):
         if self.enabled.get() and self.active_provider == "openai_compatible" and (
                 not self.model.get().strip() or not self.base_url.get().strip()):
             messagebox.showwarning("AI settings", "Enter a model and HTTPS base URL for this provider.", parent=self)
+            return
+        if self.enabled.get() and issubclass(self.ai.PROVIDERS[self.active_provider],
+                                             self.ai.VisionEndpointProvider) and not self.model.get().strip():
+            messagebox.showwarning("AI settings", "Enter a vision-capable model ID for this provider.", parent=self)
             return
         self._remember_fields()
         self.settings.update(enabled=self.enabled.get(), api_key=key, provider=self.active_provider)

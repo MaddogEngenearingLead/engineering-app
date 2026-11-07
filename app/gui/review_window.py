@@ -50,9 +50,11 @@ class LocationViewer(tk.Toplevel):
     VIEW_W, VIEW_H = 900, 600
     RENDER_SCALE = 3.0  # pixels per PDF point; zooming crops this rendering
 
-    def __init__(self, parent, pdf_path: str, title: str, locs: list[dict], page: int | None = None):
+    def __init__(self, parent, pdf_path: str, title: str, locs: list[dict], page: int | None = None,
+                 question: dict | None = None):
         super().__init__(parent)
         self.pdf_path, self.locs, self.whole_page = pdf_path, locs, page
+        self.question = question
         self.index, self.zoom = 0, 1.0
         self._pages: dict[int, object] = {}
         self.title(title)
@@ -66,8 +68,21 @@ class LocationViewer(tk.Toplevel):
         self.counter.pack(side="left", padx=10)
         tk.Button(bar, text="Zoom +", command=lambda: self.set_zoom(self.zoom * 1.5)).pack(side="right", padx=2)
         tk.Button(bar, text="Zoom -", command=lambda: self.set_zoom(self.zoom / 1.5)).pack(side="right", padx=2)
-        self.label = tk.Label(self)
-        self.label.pack()
+        self.canvas = tk.Canvas(self, width=self.VIEW_W, height=self.VIEW_H, highlightthickness=0)
+        self.canvas.pack()
+        self.note = None
+        if question and locs:
+            self.note = tk.Frame(self.canvas, bg="#fffde7", highlightbackground="#a000a0", highlightthickness=2)
+            tk.Label(self.note, text="Review note", bg="#fffde7", font=("Arial", 10, "bold")
+                     ).pack(anchor="w", padx=5)
+            frame = tk.Frame(self.note, bg="#fffde7")
+            frame.pack(fill="both", expand=True, padx=4, pady=(0, 4))
+            scroll = ttk.Scrollbar(frame)
+            scroll.pack(side="right", fill="y")
+            self.note_text = tk.Text(frame, width=34, height=8, wrap="word", bg="#fffde7",
+                                     relief="flat", yscrollcommand=scroll.set)
+            self.note_text.pack(side="left", fill="both", expand=True)
+            scroll.config(command=self.note_text.yview)
         tk.Label(self, fg="gray", text="Left/Right arrows = previous/next   + / - or mouse wheel = zoom"
                  ).pack(pady=(0, 4))
         self.bind("<Left>", lambda _e: self.step(-1))
@@ -101,8 +116,6 @@ class LocationViewer(tk.Toplevel):
         self.show()
 
     def show(self):
-        from PIL import ImageDraw
-
         loc = self.locs[self.index] if self.locs else {"page": self.whole_page}
         img, pw, ph = self._page_image(int(loc["page"]))
         k = img.width / pw
@@ -111,9 +124,6 @@ class LocationViewer(tk.Toplevel):
         view_h_pt = view_w_pt * self.VIEW_H / self.VIEW_W
         if self.locs:
             cx, cy = loc["x"] * k, loc["y"] * k
-            draw = ImageDraw.Draw(img := img.copy())
-            r = 55 / self.zoom ** 0.3 * self.RENDER_SCALE / 1.5
-            draw.ellipse((cx - r, cy - r, cx + r, cy + r), outline=(255, 0, 255), width=int(5 * self.RENDER_SCALE / 1.5))
         else:
             cx, cy = img.width / 2, img.height / 2
         w, h = view_w_pt * k, view_h_pt * k
@@ -124,7 +134,38 @@ class LocationViewer(tk.Toplevel):
         buf = io.BytesIO()
         crop.save(buf, format="PNG")
         self.photo = tk.PhotoImage(data=base64.b64encode(buf.getvalue()))
-        self.label.config(image=self.photo)
+        self.canvas.config(height=crop.height)
+        self.canvas.delete("all")
+        self.canvas.create_image(0, 0, image=self.photo, anchor="nw")
+        if self.locs:
+            px = (cx - left) * self.VIEW_W / (min(img.width, left + w) - left)
+            py = (cy - top) * crop.height / (min(img.height, top + h) - top)
+            radius = 30
+            bounds = (px - radius, py - radius, px + radius, py + radius)
+            self.canvas.create_oval(*bounds, outline="white", width=8, tags="location_highlight")
+            self.canvas.create_oval(*bounds, outline="#d000d0", width=4, tags="location_highlight")
+        if self.note is not None:
+            item = loc.get("review_item") or self.question.get("title", "Drawing location")
+            what = self.question.get("question", "").split("\n\n", 1)[0]
+            reason = loc.get("review_reason")
+            why = self.question.get("why", "")
+            text = f"Item: {item}\n\nWhat: {what}\n\nWhy: {why}"
+            if reason:
+                text += f"\n\nItem-specific reason: {reason}"
+            self.note_text.config(state="normal")
+            self.note_text.delete("1.0", "end")
+            self.note_text.insert("1.0", text)
+            self.note_text.config(state="disabled")
+            note_w, note_h = 310, 185
+            x = px + radius + 16
+            if x + note_w > self.VIEW_W:
+                x = px - radius - note_w - 16
+            x = max(0, min(self.VIEW_W - note_w, x))
+            y = max(0, min(max(0, crop.height - note_h), py - note_h / 2))
+            self.canvas.create_line(px + (radius if x > px else -radius), py,
+                                    x if x > px else x + note_w, y + note_h / 2,
+                                    fill="#a000a0", width=2)
+            self.canvas.create_window(x, y, window=self.note, anchor="nw", width=note_w, height=note_h)
         n = len(self.locs)
         grid = loc.get("grid", "")
         self.counter.config(text=(f"{self.index + 1} of {n}  -  page {loc['page']} {grid}" if n
@@ -376,7 +417,7 @@ class ReviewWindow(tk.Toplevel):
     def _show_question(self, q: dict, parent=None):
         locs = q.get("locations") or []
         try:
-            return LocationViewer(parent or self, self.pid_file, q["title"], locs, None)
+            return LocationViewer(parent or self, self.pid_file, q["title"], locs, None, question=q)
         except Exception as exc:
             messagebox.showerror("Location", f"Could not draw the P&ID: {exc}", parent=self)
 

@@ -197,6 +197,46 @@ class OpenAICompatibleProvider(OpenAIProvider):
         return super().generate(prompt, images)
 
 
+class VisionEndpointProvider(OpenAIProvider):
+    """OpenAI-compatible service that requires the user to select a vision model."""
+    default_model = ""
+
+    def generate(self, prompt: str, images: list[bytes]) -> str:
+        if not self.model:
+            raise AIError(f"Set a vision-capable model for {self.label}.")
+        return super().generate(prompt, images)
+
+
+class XAIProvider(VisionEndpointProvider):
+    name = "xai"
+    label = "xAI Grok"
+    default_base_url = "https://api.x.ai/v1"
+
+
+class GroqProvider(VisionEndpointProvider):
+    name = "groq"
+    label = "Groq"
+    default_base_url = "https://api.groq.com/openai/v1"
+
+
+class MistralProvider(VisionEndpointProvider):
+    name = "mistral"
+    label = "Mistral AI"
+    default_base_url = "https://api.mistral.ai/v1"
+
+
+class OpenRouterProvider(VisionEndpointProvider):
+    name = "openrouter"
+    label = "OpenRouter"
+    default_base_url = "https://openrouter.ai/api/v1"
+
+
+class TogetherProvider(VisionEndpointProvider):
+    name = "together"
+    label = "Together AI"
+    default_base_url = "https://api.together.xyz/v1"
+
+
 class AnthropicProvider(Provider):
     name = "anthropic"
     label = "Anthropic Claude"
@@ -224,6 +264,8 @@ class AnthropicProvider(Provider):
 
 PROVIDERS: dict[str, type[Provider]] = {cls.name: cls for cls in
                                        (GeminiProvider, OpenAIProvider, AnthropicProvider,
+                                        XAIProvider, GroqProvider, MistralProvider,
+                                        OpenRouterProvider, TogetherProvider,
                                         OpenAICompatibleProvider)}
 
 

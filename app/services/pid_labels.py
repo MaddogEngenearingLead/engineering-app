@@ -130,7 +130,7 @@ def scan_page_labels(page, *, allowed_prefixes: set, label_codes: set, decode_ok
     """Find tags and device labels on a page.
 
     ``decode_ok(prefix)`` says whether letters decode through the instrument key.
-    Returns ``{"occurrences": [...], "unrecognised": [...], "colour_mix": {...}}``.
+    Returns recognised occurrences and unrecognised tags with their locations.
     """
     from app.services.pid_extraction import DENYLIST_PREFIXES
     locate = grid_locator(page)
@@ -149,7 +149,15 @@ def scan_page_labels(page, *, allowed_prefixes: set, label_codes: set, decode_ok
 
     words = [w for w in words if left < w["x0"] < right and top < w["top"] < bottom]
     words.sort(key=lambda w: (round(w["top"] / 6), w["x0"]))
-    out, unrecognised, mix = [], [], {"black": 0, "grey": 0, "other": 0}
+    out, unrecognised, unrecognised_locations, mix = [], [], [], {"black": 0, "grey": 0, "other": 0}
+
+    def unknown(tag, first, last):
+        cx = (first["x0"] + last["x1"]) / 2
+        cy = (min(first["top"], last["top"]) + max(first["bottom"], last["bottom"])) / 2
+        unrecognised.append(tag)
+        unrecognised_locations.append({"tag": tag, "x": round(cx, 1), "y": round(cy, 1),
+                                       "grid": locate(cx, cy)})
+
     skip_next = False
     used: set = set()
     for i, w in enumerate(words):
@@ -171,7 +179,7 @@ def scan_page_labels(page, *, allowed_prefixes: set, label_codes: set, decode_ok
             elif (nxt and len(nxt["text"]) >= 3 and _NUM.match(nxt["text"]) and abs(nxt["top"] - w["top"]) < 6
                   and 0 <= nxt["x0"] - w["x1"] < 25 and text not in allowed_prefixes
                   and text not in label_codes and text not in _NOT_TAGS and not decode_ok(text)):
-                unrecognised.append(f"{text}-{nxt['text']}")  # unknown code + number: ask rather than miss it
+                unknown(f"{text}-{nxt['text']}", w, nxt)
             elif text in label_codes or text in allowed_prefixes:
                 below = [x for x in words if _NUM.match(x["text"]) and 0 < x["top"] - w["bottom"] < 14
                          and abs((x["x0"] + x["x1"]) / 2 - (w["x0"] + w["x1"]) / 2) < 14 and len(x["text"]) >= 3]
@@ -184,7 +192,7 @@ def scan_page_labels(page, *, allowed_prefixes: set, label_codes: set, decode_ok
             continue
         if m and prefix not in allowed_prefixes and prefix not in label_codes and not decode_ok(prefix):
             if len(prefix) >= 2 and prefix not in NOISE and prefix not in DENYLIST_PREFIXES:
-                unrecognised.append(f"{prefix}-{number}")
+                unknown(f"{prefix}-{number}", w, w)
             continue
         if prefix in DENYLIST_PREFIXES and prefix not in label_codes:
             continue
@@ -197,4 +205,5 @@ def scan_page_labels(page, *, allowed_prefixes: set, label_codes: set, decode_ok
             region = "future"
         out.append({"prefix": prefix, "number": number, "x": round(cx, 1), "y": round(cy, 1),
                     "text_colour": state, "region": region, "grid": locate(cx, cy)})
-    return {"occurrences": out, "unrecognised": sorted(set(unrecognised)), "colour_mix": mix, "locate": locate}
+    return {"occurrences": out, "unrecognised": sorted(set(unrecognised)),
+            "unrecognised_locations": unrecognised_locations, "colour_mix": mix, "locate": locate}

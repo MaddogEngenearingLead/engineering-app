@@ -28,6 +28,11 @@ and the scanned BOM to the selected AI provider.
 3. **Review / clarify** – open the review window to:
    - see every item with its location and why it is on the BOM;
    - use **Show on drawing** with Previous/Next and zoom to look at each location;
+     a magenta circle marks the selected location without obscuring its center.
+     When only a page is known, the viewer shows the whole page without a circle;
+     question locations show a scrollable note identifying the item, what is being
+     asked, and why. The note changes with the selected location;
+     unrecognised tags can be located this way after rescanning older jobs;
    - answer the **questions** the scan could not settle (marked `[OPEN]` / `[answered]`).
      Each question says what is asked, why, and where on the drawing. Answers add or
      change BOM items and are recorded on the BOM; answered questions stop being flagged.
@@ -163,8 +168,11 @@ left blank instead of assumed to be one.
 ## Optional AI review
 
 Click **AI settings** on the dashboard, enable AI, select Google Gemini, OpenAI,
-Anthropic Claude, or an OpenAI-compatible provider, and enter that provider's API
-key and a vision-capable model. For a compatible provider, also supply its HTTPS
+Anthropic Claude, xAI Grok, Groq, Mistral AI, OpenRouter, Together AI, or an
+OpenAI-compatible provider, and enter that provider's API key and a vision-capable
+model. Grok, Groq, Mistral, OpenRouter and Together require an explicit model ID
+that supports image input and the OpenAI chat-completions image format. For a custom
+compatible provider, also supply its HTTPS
 API base URL (typically ending in `/v1`); the service must support image inputs.
 Available models, costs and image limits depend on the provider. Not every AI
 service supports this protocol. Provider keys are stored separately in the local

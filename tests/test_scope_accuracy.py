@@ -112,7 +112,16 @@ def test_scan_uses_legend_and_scope(pid, tmp_path):
     # scope items that are not drawn as tags still appear, flagged for checking
     assert any(m["origin"] == "scope" and "lange" in m["description"] for m in r["materials"])
     # unexplained tag-like items are reported instead of silently dropped
-    assert any(f["type"] == "unidentified_tags" and "ZZQ-7" in f["tags"] for f in r["flags"])
+    flag = next(f for f in r["flags"] if f["type"] == "unidentified_tags" and "ZZQ-7" in f["tags"])
+    loc = next(loc for loc in flag["locations"] if loc["tag"] == "ZZQ-7")
+    assert loc["page"] == 3 and loc["x"] > 50 and loc["y"] > 0
+    from app.services.review_questions import apply_answer, build_questions
+    q = next(q for q in build_questions([flag], []) if q["flag_type"] == "unidentified_tags")
+    assert q["locations"][0]["review_item"] == "ZZQ-7"
+    materials = []
+    apply_answer(materials, q, {"fields": {"ZZQ-7": "Mystery valve"}})
+    assert materials[0]["locations"][0]["page"] == 3
+    assert materials[0]["location"].startswith("p3")
 
 
 def test_csv_has_consistent_columns(pid, tmp_path):

@@ -445,7 +445,11 @@ def select_items(pdf, by_page, demo, new, *, legend, abbreviations, symbol_legen
     # unidentified tag-like items + items named in scope but drawn as existing
     unrecognised = sorted({t for p in new for t in scans[p]["unrecognised"]})
     if unrecognised:
+        selected = unrecognised[:20]
+        locations = [{**loc, "page": p} for p in new for loc in scans[p]["unrecognised_locations"]
+                     if loc["tag"] in selected]
         flags.append({"type": "unidentified_tags", "severity": "review", "tags": unrecognised[:20],
+                      "locations": locations,
                       "message": "Tag-like items not recognised by the legend or instrument key: "
                                  + ", ".join(unrecognised[:10]) + "."})
     for key, tag in existing_named.items():
