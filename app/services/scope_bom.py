@@ -30,6 +30,7 @@ from app.services.pid_extraction import (
     infer_equipment_type,
 )
 from app.services.bom_select import select_items
+from app.services.embedded_bom import extract_embedded_bom
 from app.services.pid_markup import markup_items, parse_symbol_legend
 
 logger = logging.getLogger(__name__)
@@ -755,6 +756,47 @@ def _pages_in_range(pages, n: int) -> list[int]:
     return sorted({p for p in (pages or []) if 1 <= p <= n})
 
 
+def _export_all(materials, flags, notes, scope_text, pdf_path, job_id, source_file, output_dir, tag_infos=()):
+    out = {}
+    for key, fn, kw in (
+        ("bom_pdf", export_bom_to_pdf, {"source_file": source_file or Path(pdf_path).name,
+                                        "scope_of_work": scope_text or "", "review_notes": notes}),
+        ("bom_json", export_bom_to_json, {"source_file": source_file or Path(pdf_path).name,
+                                          "scope_of_work": scope_text or "", "review_notes": notes,
+                                          "detected_assets": list(tag_infos)}),
+        ("bom_csv", export_bom_to_csv, {}),
+    ):
+        try:
+            out[key] = fn(job_id=job_id, materials=materials, output_dir=output_dir, **kw)
+        except Exception as exc:
+            out[key] = None
+            flags.append({"type": f"{key}_failed", "severity": "warning", "message": f"{key} export failed: {exc}"})
+    return out
+
+
+def _embedded_result(rows, pdf_path, scope_text, job_id, source_file, output_dir, review_notes, n_pages):
+    flags = [{"type": "embedded_bom", "severity": "info",
+              "message": f"The drawing package prints its own bill of materials ({len(rows)} items); "
+                         "it was read directly instead of being inferred from tags."}]
+    for r in rows:
+        if r["notes"]:
+            flags.append({"type": "bom_quantity_note", "severity": "review",
+                          "message": f"Item {r['tag_id']}: {r['notes']}."})
+    notes = list(review_notes or []) + [f["message"] for f in flags if f["severity"] in ("warning", "review")]
+    exp = _export_all(rows, flags, notes, scope_text, pdf_path, job_id or "job", source_file, output_dir)
+    return {
+        "status": "completed", "job_number": None, "demo_pages": [], "new_work_pages": [],
+        "classification_method": "embedded_bom", "classification_confidence": 1.0,
+        "legend": {"page": None, "key_page": None, "found": False, "entries_found": 0, "abbreviations": {},
+                   "symbol_legend": {}, "instrument_key_entries": 0},
+        "colour_scheme": {}, "detected_assets": [], "excluded_items": [], "demolished_items": [],
+        "summary": {"embedded_bom_items": len(rows), "drawing_items": len(rows),
+                    "drawing_item_count": sum(r["quantity"] for r in rows), "scope_only_items": 0,
+                    "pages": n_pages},
+        "scope_text": scope_text or "", "materials": rows, "flags": flags, **exp,
+    }
+
+
 def build_scoped_bom(
     pdf_path: str,
     scope_text: str | None = None,
@@ -778,6 +820,11 @@ def build_scoped_bom(
         n_pages = len(pdf.pages)
         sigs = [extract_page_content_signature(pdf, n) for n in range(1, n_pages + 1)]
         by_page = {s["page"]: s for s in sigs}
+
+        embedded = extract_embedded_bom(pdf)
+        if embedded:
+            return _embedded_result(embedded, pdf_path, scope_text, job_id, source_file, output_dir,
+                                    review_notes, n_pages)
 
         # 1. page classification (overrides win)
         mapping = normalise_highlight_mapping(highlight_mapping)
