@@ -6,7 +6,21 @@ on:
     tags: ["v*"]
 
 jobs:
+  prepare-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Create draft release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${{ github.ref_name }}" --repo "${{ github.repository }}" --title "${{ github.ref_name }}" --generate-notes --draft
+
   build:
+    needs: prepare-release
+    permissions:
+      contents: write
     strategy:
       matrix:
         os: [windows-latest, macos-latest]
@@ -44,7 +58,18 @@ jobs:
       - name: Zip macOS app
         if: runner.os == 'macOS'
         run: cd dist && zip -r JobManager-macos.zip JobManager.app
+      - name: Upload Windows release asset
+        if: github.ref_type == 'tag' && runner.os == 'Windows'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ github.ref_name }}" dist/JobManager.exe --repo "${{ github.repository }}" --clobber
+      - name: Upload macOS release asset
+        if: github.ref_type == 'tag' && runner.os == 'macOS'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ github.ref_name }}" dist/JobManager-macos.zip --repo "${{ github.repository }}" --clobber
       - uses: actions/upload-artifact@v4
+        if: github.ref_type != 'tag'
         with:
           name: JobManager-${{ runner.os }}
           path: |
@@ -58,11 +83,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
-        with:
-          path: assets
-          merge-multiple: true
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "${{ github.ref_name }}" assets/* --repo "${{ github.repository }}" --title "${{ github.ref_name }}" --generate-notes
+        run: gh release edit "${{ github.ref_name }}" --repo "${{ github.repository }}" --draft=false --latest
