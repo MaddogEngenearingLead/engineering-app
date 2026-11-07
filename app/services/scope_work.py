@@ -56,27 +56,71 @@ def _digest(path: Path) -> str:
         return hashlib.file_digest(f, "sha256").hexdigest()
 
 
+_WORK_NOTE = re.compile(
+    r"\b(?:install\w*|remov\w*|demol\w*|replac\w*|fabricat\w*|"
+    r"provid\w*|furnish\w*|relocat\w*|modif\w*|repair\w*|"
+    r"connect\w*|test\w*|commission\w*|new work)\b", re.I)
+
+
+def _note_refers_to_item(note: str, material: dict) -> bool:
+    """Use explicit identifiers only; never infer work from proximity or material type."""
+    tag = str(material.get("tag_id") or "").strip()
+    if not tag or tag == "-":
+        return False
+    if material.get("origin") in ("drawing_bom", "drawing_bom_ai"):
+        return bool(re.search(rf"\bITEM\s*(?:NO\.?|#)?\s*{re.escape(tag)}(?!\w)", note, re.I))
+    parts = re.fullmatch(r"([A-Za-z]+)[\s-]*(\d+[A-Za-z]?)", tag)
+    if not parts:
+        return False
+    return bool(re.search(rf"(?<![A-Za-z0-9]){re.escape(parts[1])}[\s-]*"
+                          rf"{re.escape(parts[2])}(?![A-Za-z0-9])", note, re.I))
+
+
 def create_scope_draft(jm: JobManager, job_number: str, pid_path: Path, result: dict) -> dict:
     """Save evidence for review, never as an approved scope file."""
     if jm.get_scope_files(job_number):
         raise ValueError("A scope file already exists; it will not be replaced.")
-    lines = []
+    notes = []
     with pdfplumber.open(pid_path) as pdf:
         pages = sorted(set(result.get("demo_pages", []) + result.get("new_work_pages", [])))
         pages = pages or list(range(1, len(pdf.pages) + 1))
         for page_no in pages:
-            for note in summarize_scope(pdf.pages[page_no - 1].extract_text() or ""):
-                if (12 <= len(note) <= 400 and
-                        re.search(r"\b(?:install|installation|remove|removal|demolish|demolition|"
-                                  r"replace|replacement|new work|fabricate|provide)\b", note, re.I)):
-                    lines.append(f"- Drawing page {page_no}, possible work note: {note}")
+            for raw in (pdf.pages[page_no - 1].extract_text() or "").splitlines():
+                note = re.sub(r"\s+", " ", raw).strip()
+                if 12 <= len(note) <= 400 and _WORK_NOTE.search(note):
+                    notes.append((page_no, note))
+    lines = []
+    used_notes = set()
     for material in result.get("materials", []):
         tag = str(material.get("tag_id") or "").strip()
         description = str(material.get("description") or "").strip()
-        if tag or description:
-            item = " - ".join(part for part in (tag, description) if part)
-            location = str(material.get("location") or "").strip()
-            lines.append(f"- Confirm intended work for {item}" + (f" ({location})" if location else "") + ".")
+        if not tag and not description:
+            continue
+        item = " - ".join(part for part in (tag if tag != "-" else "", description) if part)
+        location = str(material.get("location") or "").strip()
+        quantity, unit = material.get("quantity"), material.get("unit") or ""
+        quantity_text = f"; drawing quantity: {quantity} {unit}".rstrip() if quantity is not None else "; quantity unknown"
+        responsibility = []
+        for key, label in (("supplied_by", "supplied by"), ("installed_by", "installed by")):
+            value = str(material.get(key) or "").strip()
+            if value and value not in ("-", "--"):
+                responsibility.append(f"{label}: {value}")
+        responsibility_text = "; " + "; ".join(responsibility) if responsibility else ""
+        evidence = [(page, note) for page, note in notes if _note_refers_to_item(note, material)]
+        if evidence:
+            refs = " | ".join(f"page {page}: {note}" for page, note in evidence)
+            used_notes.update(evidence)
+            work = f"Drawing instruction(s) to verify: {refs}"
+        else:
+            work = "Confirm intended work; no item-specific instruction was identified"
+            basis = str(material.get("basis") or "").strip()
+            if material.get("origin") == "drawing" and basis:
+                work += f"; drawing selection evidence: {basis}"
+        lines.append(f"- {item}" + (f" ({location})" if location else "")
+                     + f"{quantity_text}{responsibility_text}. {work}.")
+    for page, note in notes:
+        if (page, note) not in used_notes:
+            lines.append(f"- Drawing page {page}, possible work note (item association unconfirmed): {note}")
     if not lines:
         lines.append("- No reliable work instructions were extracted. Define the scope from the P&ID.")
     draft = {

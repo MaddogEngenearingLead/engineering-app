@@ -74,8 +74,35 @@ def test_draft_includes_drawing_notes_even_for_embedded_bom(tmp_path):
     jm.add_job_files("101", str(pdf))
     draft = create_scope_draft(jm, "101", jm.get_pid_files("101")[0],
                                {"new_work_pages": [], "materials": []})
-    assert "Drawing page 1, possible work note: Install a new valve" in draft["text"]
+    assert "Drawing page 1, possible work note (item association unconfirmed): Install a new valve" in draft["text"]
     assert not jm.get_scope_files("101")
+
+
+def test_scope_draft_links_explicit_identifiers_but_does_not_invent_work(tmp_path):
+    from app.services.scope_work import create_scope_draft
+    from tests.conftest import make_pdf
+
+    pdf = make_pdf(tmp_path / "drawing.pdf", [
+        (["Replace V-101 with a new valve.", "Remove V-102 and retain V-103.",
+          "Install ITEM 12 at V-101.", "Provide insulation."], (0, 0, 0)),
+    ])
+    jm = JobManager(str(tmp_path / "jobs"))
+    jm.add_job_files("101", str(pdf))
+    result = {"materials": [
+        {"tag_id": "V-101", "description": "Control valve", "quantity": 2, "unit": "ea",
+         "origin": "drawing", "location": "p1"},
+        {"tag_id": "V-102", "description": "Valve", "origin": "drawing", "location": "p1"},
+        {"tag_id": "V-104", "description": "Valve", "origin": "drawing", "location": "p1"},
+        {"tag_id": "12", "description": "Pipe", "origin": "drawing_bom", "location": "p1",
+         "supplied_by": "OWNER", "installed_by": "CONTRACTOR"},
+    ]}
+    text = create_scope_draft(jm, "101", jm.get_pid_files("101")[0], result)["text"]
+    rows = text.splitlines()
+    assert "Replace V-101 with a new valve" in rows[0] and "drawing quantity: 2 ea" in rows[0]
+    assert "Remove V-102 and retain V-103" in rows[1]
+    assert "no item-specific instruction" in rows[2] and "quantity unknown" in rows[2]
+    assert "Install ITEM 12 at V-101" in rows[3] and "installed by: CONTRACTOR" in rows[3]
+    assert any("item association unconfirmed" in row and "Provide insulation" in row for row in rows)
 
 
 def test_job_scope_api_review(freetext_pdf, tmp_path, monkeypatch):

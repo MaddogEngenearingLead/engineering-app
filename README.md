@@ -21,8 +21,11 @@ and the scanned BOM to the selected AI provider.
    - lists highlighted piping runs by size.
    - when a drawing package contains a printed BOM, reads it as the master list
      instead, preserving all rows and flagging scope matches for review.
-   - if no scope file exists, prepares an editable draft from possible drawing
-     notes and identified items. Review and edit it against the P&ID, then approve
+   - if no scope file exists, prepares an editable draft listing identified items,
+     drawing quantities, stated supply/installation responsibilities and explicitly
+     referenced work notes where available. Unlinked notes and items with no
+     identified instruction remain clearly marked for review. Review and edit
+     it against the P&ID, then approve
      it before the app saves `scope/reviewed_scope.txt` and reruns the scan.
      Cancelling leaves the draft pending and does not create a scope file.
 3. **Review / clarify** – open the review window to:
@@ -33,14 +36,19 @@ and the scanned BOM to the selected AI provider.
      question locations show a scrollable note identifying the item, what is being
      asked, and why. The note changes with the selected location;
      unrecognised tags can be located this way after rescanning older jobs;
+     page-only warnings open the whole page without a guessed circle; zoom and
+     drag to inspect it, and hide the note when it obscures the drawing;
+     for a scan that needs clarification before a BOM can be generated, use
+     **View drawing issues** to inspect warnings with known drawing locations;
    - answer the **questions** the scan could not settle (marked `[OPEN]` / `[answered]`).
      Each question says what is asked, why, and where on the drawing. Answers add or
      change BOM items and are recorded on the BOM; answered questions stop being flagged.
      Answers are kept if the BOM is regenerated;
    - edit, remove or add items and add free-text clarification notes.
 4. **Save and re-export** – the BOM PDF (items, locations, clarifications, remaining
-   review notes) is rewritten. CSV and JSON copies are written next to it in `bom_exports/`
-   for internal use. The PDF contains an extractive, bulleted scope summary;
+   review notes) is rewritten. Only the most recent successfully generated job
+   BOM PDF, CSV and JSON are kept in `bom_exports/`; other files are not removed.
+   The PDF contains an extractive, bulleted scope summary;
    JSON retains the complete scope and its summary. Verify the summary against
    the original scope document, particularly exclusions and qualifications.
 
@@ -160,20 +168,26 @@ Nothing is tied to a particular drawing. Codes come from each drawing's own lege
 
 For printed BOMs, `scope_aliases` also maps a scope term to words in material
 descriptions, for example `"Jointing": ["GASKET"]`. Built-in bulk-material
-aliases cover flanges, gaskets, bolts, nuts and bolting. A terminology match does
+aliases cover flanges, gaskets, bolts, nuts, bolting, pipe, valves and several
+other material classes. The scope-crosscheck question can show each printed row
+and its matched term and scope excerpt, or explain that no term matched. Native
+table rows are circled; OCR and AI rows may only have a page-level location.
+Rescan older jobs to collect row coordinates and match evidence. A terminology match does
 not verify size, rating, quantity, responsibility or whether work is in scope:
 all printed rows remain in the master list for review. Unstated quantities are
 left blank instead of assumed to be one.
 
 ## Optional AI review
 
-Click **AI settings** on the dashboard, enable AI, select Google Gemini, OpenAI,
+Click **AI settings** on the dashboard, enable AI, select Google Gemini, ChatGPT (OpenAI API),
 Anthropic Claude, xAI Grok, Groq, Mistral AI, OpenRouter, Together AI, or an
 OpenAI-compatible provider, and enter that provider's API key and a vision-capable
 model. Grok, Groq, Mistral, OpenRouter and Together require an explicit model ID
 that supports image input and the OpenAI chat-completions image format. For a custom
 compatible provider, also supply its HTTPS
 API base URL (typically ending in `/v1`); the service must support image inputs.
+ChatGPT uses an OpenAI API key and API billing; a ChatGPT subscription does not
+include API access.
 Available models, costs and image limits depend on the provider. Not every AI
 service supports this protocol. Provider keys are stored separately in the local
 settings file as plaintext. When enabled, drawing pages, scope, and BOM data are sent to the

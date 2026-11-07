@@ -782,6 +782,7 @@ def _embedded_result(rows, pdf_path, scope_text, job_id, source_file, output_dir
     for r in rows:
         if r["notes"]:
             flags.append({"type": "bom_quantity_note", "severity": "review",
+                          "page": r.get("page"), "locations": r.get("locations", []),
                           "message": f"Item {r['tag_id']}: {r['notes']}."})
     notes = list(review_notes or []) + [f["message"] for f in flags if f["severity"] in ("warning", "review")]
     exp = _export_all(rows, flags, notes, scope_text, pdf_path, job_id or "job", source_file, output_dir)
@@ -859,6 +860,9 @@ def build_scoped_bom(
                 for i, row in enumerate(embedded, 1):
                     row["item_number"] = i
         if embedded:
+            from app.services.embedded_bom import scope_crosscheck_flag
+            extraction_flags = [f for f in extraction_flags if f["type"] != "bom_scope_crosscheck"]
+            extraction_flags.append(scope_crosscheck_flag(embedded, scope_text or ""))
             return _embedded_result(embedded, pdf_path, scope_text, job_id, source_file, output_dir,
                                     review_notes, n_pages, extraction_flags)
         if unreadable:

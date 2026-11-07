@@ -37,6 +37,23 @@ def test_unknown_tag_multiple_locations_and_old_flags():
     assert not build_questions([{k: v for k, v in flag.items() if k != "locations"}], [])[0]["locations"]
 
 
+def test_generic_warnings_use_available_locations_and_never_guess():
+    flags = [
+        {"type": "another_warning", "severity": "warning", "page": 17, "message": "Page issue"},
+        {"type": "another_warning", "severity": "warning", "page": 18, "x": 20, "y": 30, "message": "Spot"},
+        {"type": "tag_not_in_scope", "severity": "warning", "tag": "V-2", "message": "Tag"},
+        {"type": "scope_tag_not_found", "severity": "warning", "tag": "V-3", "message": "Not found"},
+        {"type": "ambiguous", "severity": "review", "pages": [2, 4], "message": "Unclear pages"},
+    ]
+    materials = [{"tag_id": "V-2", "description": "Valve", "locations": [{"page": 5, "x": 10, "y": 12}]}]
+    questions = build_questions(flags, materials)
+    assert questions[0]["locations"] == [{"page": 17}]
+    assert questions[1]["locations"][0]["x"] == 20
+    assert questions[2]["locations"][0]["page"] == 5
+    assert questions[3]["locations"] == []
+    assert questions[4]["locations"] == [{"page": 2}, {"page": 4}]
+
+
 @pytest.mark.skipif(not os.environ.get("DISPLAY"), reason="Tk requires a display")
 def test_question_viewer_note_tracks_location_and_zoom(monkeypatch):
     root = tk.Tk()
@@ -127,5 +144,57 @@ def test_circle_remains_visible_and_tracks_location_at_all_zoom_levels(monkeypat
         assert not page_viewer.canvas.find_withtag("location_highlight")
         assert "whole page" in page_viewer.counter.cget("text")
         page_viewer.destroy()
+    finally:
+        root.destroy()
+
+
+@pytest.mark.skipif(not os.environ.get("DISPLAY"), reason="Tk requires a display")
+def test_page_only_flag_opens_without_circle_and_can_pan(monkeypatch):
+    root = tk.Tk()
+    root.withdraw()
+    monkeypatch.setattr(LocationViewer, "_page_image",
+                        lambda self, page: (Image.new("RGB", (1800, 1200), "white"), 600.0, 400.0))
+    flag = {"type": "no_text_layer", "severity": "warning", "page": 50,
+            "message": "Page 50 has no readable text."}
+    q = build_questions([flag], [])[0]
+    try:
+        owner = type("Owner", (), {"pid_file": "unused.pdf"})()
+        viewer = ReviewWindow._show_question(owner, q, root)
+        assert "location unknown" in viewer.counter.cget("text")
+        assert not viewer.canvas.find_withtag("location_highlight")
+        assert "Page 50" in viewer.note_text.get("1.0", "end")
+        viewer.set_zoom(2)
+        event = type("Event", (), {"x": 400, "y": 250})()
+        viewer._start_drag(event)
+        event.x = 300
+        viewer._pan(event)
+        assert viewer.pan_x > 0
+        viewer.toggle_note()
+        assert not viewer.note_visible
+        viewer.destroy()
+    finally:
+        root.destroy()
+
+
+@pytest.mark.skipif(not os.environ.get("DISPLAY"), reason="Tk requires a display")
+def test_uncompleted_scan_issues_can_open_page(monkeypatch, tmp_path):
+    from app.gui import job_manager_gui as gui
+
+    monkeypatch.setattr(gui, "get_upload_dir", lambda: str(tmp_path / "jobs"))
+    monkeypatch.setattr(gui.JobManagerApp, "_check_updates", lambda self: None)
+    review = {"pid_file": "drawing.pdf", "result": {"questions": [
+        {"type": "ocr_unavailable", "page": 7, "message": "OCR unavailable"},
+    ]}}
+    monkeypatch.setattr(gui, "load_current_clarification", lambda *_: review)
+    calls = []
+    monkeypatch.setattr(gui, "LocationViewer", lambda *args, **kwargs: calls.append((args, kwargs)))
+    root = gui.JobManagerApp()
+    root.withdraw()
+    try:
+        root.review_scan_issues("101")
+        window = next(w for w in root.winfo_children() if isinstance(w, tk.Toplevel))
+        next(w for w in window.winfo_children() if isinstance(w, tk.Button)).invoke()
+        assert calls[0][0][3] == [{"page": 7}]
+        assert calls[0][1]["question"]["flag_type"] == "ocr_unavailable"
     finally:
         root.destroy()

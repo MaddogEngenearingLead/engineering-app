@@ -341,39 +341,47 @@ async def scan_job_pid(
             raise HTTPException(status_code=400, detail="highlight_mapping must be a JSON object.")
 
     # Generate BOM
-    job_id = f"JOB-{job_number}"
+    from app.services.bom_export import job_export_id, publish_job_exports, staged_job_exports
+    from app.services.job_scan import _cleanup_warning
+
+    job_id = job_export_id(job_number)
     notes_list = [note.strip() for note in review_notes.split(",") if note.strip()]
     bom_export_dir = job_dir / "bom_exports"
 
     try:
-        result = build_scoped_bom(
-            str(pid_path),
-            scope_text=effective_scope,
-            demo_pages=_parse_pages(demo_pages, "demo_pages"),
-            new_work_pages=_parse_pages(new_work_pages, "new_work_pages"),
-            highlight_mapping=mapping,
-            legend_page=legend_page,
-            key_page=key_page,
-            review_notes=notes_list,
-            job_id=job_id,
-            source_file=pid_path.name,
-            output_dir=str(bom_export_dir),
-        )
-        result.update({
-            "job_number": job_number,
-            "pid_file": pid_path.name,
-            "scope_file": scope_filename or "auto-detected",
-        })
-        if result["status"] == "completed" and not effective_scope:
-            draft = create_scope_draft(job_manager, job_number, pid_path, result)
-            result.update(status="needs_scope_review", scope_draft=draft["text"],
-                          message="Review and approve the proposed scope before saving it.")
-        if result["status"] == "completed":
+        with staged_job_exports(str(bom_export_dir)) as stage:
+            result = build_scoped_bom(
+                str(pid_path), scope_text=effective_scope,
+                demo_pages=_parse_pages(demo_pages, "demo_pages"),
+                new_work_pages=_parse_pages(new_work_pages, "new_work_pages"),
+                highlight_mapping=mapping, legend_page=legend_page, key_page=key_page,
+                review_notes=notes_list, job_id=job_id, source_file=pid_path.name,
+                output_dir=str(stage),
+            )
             result.update({
-                "total_items": len(result["materials"]),
-                "scope_of_work": effective_scope[:200],
-                "review_notes": notes_list,
+                "job_number": job_number,
+                "pid_file": pid_path.name,
+                "scope_file": scope_filename or "auto-detected",
             })
+            if result["status"] != "completed":
+                for key in ("bom_pdf", "bom_json", "bom_csv"):
+                    result.pop(key, None)
+            if result["status"] == "completed" and not effective_scope:
+                draft = create_scope_draft(job_manager, job_number, pid_path, result)
+                result.update(status="needs_scope_review", scope_draft=draft["text"],
+                              message="Review and approve the proposed scope before saving it.")
+                for key in ("bom_pdf", "bom_json", "bom_csv"):
+                    result.pop(key, None)
+            if result["status"] == "completed":
+                result.update(publish_job_exports(job_id, stage, result, str(bom_export_dir)))
+                warning = _cleanup_warning(job_id, bom_export_dir, result)
+                if warning:
+                    result["cleanup_warning"] = warning
+                result.update({
+                    "total_items": len(result["materials"]),
+                    "scope_of_work": effective_scope[:200],
+                    "review_notes": notes_list,
+                })
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error generating BOM: {str(e)}")

@@ -30,6 +30,8 @@ def test_bulk_scope_aliases_and_unknown_quantity():
     assert _scope_reference("SPIRAL WOUND GASKET", "Provide gaskets") == "gasket"
     assert _scope_reference("STUD BOLT", "Provide bolting") == "bolting"
     assert _scope_reference("HEX NUT", "Provide bolting") == "bolting"
+    assert _scope_reference("CARBON STEEL PIPE", "Install new pipe") == "pipe"
+    assert _scope_reference("BALL VALVE", "Replace valves") == "valve"
     assert not _scope_reference("PIPE SUPPORT", "Provide bolting")
     assert _qty("AS REQ.") == (None, "", "Quantity not stated (as required / by field)")
 
@@ -85,6 +87,11 @@ def test_ai_fallback_when_tesseract_is_unavailable(tmp_path, monkeypatch):
     assert result["status"] == "completed"
     assert result["materials"][0]["origin"] == "drawing_bom_ai"
     assert any(f["type"] == "ai_bom_transcription" for f in result["flags"])
+    from app.services.review_questions import build_questions
+    crosscheck = next(q for q in build_questions(result["flags"], result["materials"])
+                      if q["flag_type"] == "bom_scope_crosscheck")
+    assert crosscheck["locations"][0]["page"] == 1
+    assert "x" not in crosscheck["locations"][0]
 
 
 def test_unreadable_ocr_bom_cannot_fall_back_to_tag_scan(tmp_path, monkeypatch):
@@ -195,7 +202,17 @@ def test_native_printed_bom_keeps_unmatched_and_unknown_quantities(tmp_path):
     assert rows["11"]["scope_match"] == "flange" and rows["11"]["quantity"] == 2
     assert rows["12"]["scope_match"] == "bolting" and rows["12"]["quantity"] is None
     assert rows["13"]["scope_match"] == "" and rows["13"]["quantity"] == 1
+    assert "No configured scope term" in rows["13"]["scope_match_reason"]
+    assert "scope mentions" in rows["11"]["scope_match_reason"].lower()
+    assert "BOM term 'FLANGE'" in rows["11"]["scope_match_reason"]
+    assert "Install flanges and bolting" in rows["11"]["scope_match_reason"]
+    assert all(row["locations"] and row["locations"][0]["page"] == 1 for row in rows.values())
     assert any(f["type"] == "bom_scope_crosscheck" for f in result["flags"])
+    from app.services.review_questions import build_questions
+    q = next(q for q in build_questions(result["flags"], result["materials"])
+             if q["flag_type"] == "bom_scope_crosscheck")
+    assert len(q["locations"]) == 3
+    assert "No configured scope term" in q["locations"][2]["review_reason"]
     assert all(result[key] for key in ("bom_pdf", "bom_json", "bom_csv"))
 
 

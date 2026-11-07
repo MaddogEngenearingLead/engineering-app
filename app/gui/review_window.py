@@ -56,6 +56,9 @@ class LocationViewer(tk.Toplevel):
         self.pdf_path, self.locs, self.whole_page = pdf_path, locs, page
         self.question = question
         self.index, self.zoom = 0, 1.0
+        self.pan_x, self.pan_y = 0.0, 0.0
+        self._drag = None
+        self.note_visible = True
         self._pages: dict[int, object] = {}
         self.title(title)
         bar = tk.Frame(self)
@@ -68,6 +71,8 @@ class LocationViewer(tk.Toplevel):
         self.counter.pack(side="left", padx=10)
         tk.Button(bar, text="Zoom +", command=lambda: self.set_zoom(self.zoom * 1.5)).pack(side="right", padx=2)
         tk.Button(bar, text="Zoom -", command=lambda: self.set_zoom(self.zoom / 1.5)).pack(side="right", padx=2)
+        if question and locs:
+            tk.Button(bar, text="Show / hide note", command=self.toggle_note).pack(side="right", padx=2)
         self.canvas = tk.Canvas(self, width=self.VIEW_W, height=self.VIEW_H, highlightthickness=0)
         self.canvas.pack()
         self.note = None
@@ -83,8 +88,10 @@ class LocationViewer(tk.Toplevel):
                                      relief="flat", yscrollcommand=scroll.set)
             self.note_text.pack(side="left", fill="both", expand=True)
             scroll.config(command=self.note_text.yview)
-        tk.Label(self, fg="gray", text="Left/Right arrows = previous/next   + / - or mouse wheel = zoom"
+        tk.Label(self, fg="gray", text="Left/Right arrows = previous/next   + / - or mouse wheel = zoom   Drag = pan"
                  ).pack(pady=(0, 4))
+        self.canvas.bind("<ButtonPress-1>", self._start_drag)
+        self.canvas.bind("<B1-Motion>", self._pan)
         self.bind("<Left>", lambda _e: self.step(-1))
         self.bind("<Right>", lambda _e: self.step(1))
         for k in ("<plus>", "<equal>", "<KP_Add>"):
@@ -109,6 +116,22 @@ class LocationViewer(tk.Toplevel):
     def step(self, delta: int):
         if len(self.locs) > 1:
             self.index = (self.index + delta) % len(self.locs)
+            self.pan_x = self.pan_y = 0.0
+            self.show()
+
+    def toggle_note(self):
+        self.note_visible = not self.note_visible
+        self.show()
+
+    def _start_drag(self, event):
+        self._drag = (event.x, event.y)
+
+    def _pan(self, event):
+        if self._drag:
+            scale = self._crop_width_pt / self.VIEW_W
+            self.pan_x -= (event.x - self._drag[0]) * scale
+            self.pan_y -= (event.y - self._drag[1]) * scale
+            self._drag = (event.x, event.y)
             self.show()
 
     def set_zoom(self, value: float):
@@ -119,13 +142,18 @@ class LocationViewer(tk.Toplevel):
         loc = self.locs[self.index] if self.locs else {"page": self.whole_page}
         img, pw, ph = self._page_image(int(loc["page"]))
         k = img.width / pw
-        # zoom 1.0 shows about 520 x 350 pt around the item; whole pages start fitted to the window
-        view_w_pt = (520 if self.locs else pw) / self.zoom
+        precise = loc.get("x") is not None and loc.get("y") is not None
+        # Whole-page locations are not precise and must not be circled.
+        view_w_pt = (520 if precise else max(pw, ph * self.VIEW_W / self.VIEW_H)) / self.zoom
+        self._crop_width_pt = min(view_w_pt, pw)
         view_h_pt = view_w_pt * self.VIEW_H / self.VIEW_W
-        if self.locs:
+        if precise:
             cx, cy = loc["x"] * k, loc["y"] * k
+            target_x, target_y = cx, cy
         else:
             cx, cy = img.width / 2, img.height / 2
+        cx += self.pan_x * k
+        cy += self.pan_y * k
         w, h = view_w_pt * k, view_h_pt * k
         left = min(max(0, cx - w / 2), max(0, img.width - w))
         top = min(max(0, cy - h / 2), max(0, img.height - h))
@@ -137,14 +165,14 @@ class LocationViewer(tk.Toplevel):
         self.canvas.config(height=crop.height)
         self.canvas.delete("all")
         self.canvas.create_image(0, 0, image=self.photo, anchor="nw")
-        if self.locs:
-            px = (cx - left) * self.VIEW_W / (min(img.width, left + w) - left)
-            py = (cy - top) * crop.height / (min(img.height, top + h) - top)
+        if precise:
+            px = (target_x - left) * self.VIEW_W / (min(img.width, left + w) - left)
+            py = (target_y - top) * crop.height / (min(img.height, top + h) - top)
             radius = 30
             bounds = (px - radius, py - radius, px + radius, py + radius)
             self.canvas.create_oval(*bounds, outline="white", width=8, tags="location_highlight")
             self.canvas.create_oval(*bounds, outline="#d000d0", width=4, tags="location_highlight")
-        if self.note is not None:
+        if self.note is not None and self.note_visible:
             item = loc.get("review_item") or self.question.get("title", "Drawing location")
             what = self.question.get("question", "").split("\n\n", 1)[0]
             reason = loc.get("review_reason")
@@ -157,18 +185,22 @@ class LocationViewer(tk.Toplevel):
             self.note_text.insert("1.0", text)
             self.note_text.config(state="disabled")
             note_w, note_h = 310, 185
-            x = px + radius + 16
-            if x + note_w > self.VIEW_W:
-                x = px - radius - note_w - 16
-            x = max(0, min(self.VIEW_W - note_w, x))
-            y = max(0, min(max(0, crop.height - note_h), py - note_h / 2))
-            self.canvas.create_line(px + (radius if x > px else -radius), py,
-                                    x if x > px else x + note_w, y + note_h / 2,
-                                    fill="#a000a0", width=2)
+            if precise:
+                x = px + radius + 16
+                if x + note_w > self.VIEW_W:
+                    x = px - radius - note_w - 16
+                x = max(0, min(self.VIEW_W - note_w, x))
+                y = max(0, min(max(0, crop.height - note_h), py - note_h / 2))
+                self.canvas.create_line(px + (radius if x > px else -radius), py,
+                                        x if x > px else x + note_w, y + note_h / 2,
+                                        fill="#a000a0", width=2)
+            else:
+                x, y = self.VIEW_W - note_w, 0
             self.canvas.create_window(x, y, window=self.note, anchor="nw", width=note_w, height=note_h)
         n = len(self.locs)
         grid = loc.get("grid", "")
-        self.counter.config(text=(f"{self.index + 1} of {n}  -  page {loc['page']} {grid}" if n
+        self.counter.config(text=(f"{self.index + 1} of {n}  -  page {loc['page']} {grid}"
+                                  + ("" if precise else " (whole page; location unknown)") if n
                                   else f"Page {loc['page']} (whole page)") + f"   zoom {self.zoom:.1f}x")
         state = "normal" if n > 1 else "disabled"
         self.prev_btn.config(state=state)

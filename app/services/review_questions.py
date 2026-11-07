@@ -42,6 +42,39 @@ def _item_locations(items: list[dict], tag_key: str = "tag") -> list[dict]:
     return locations
 
 
+def _drawing_locations(row: dict) -> list[dict]:
+    locs = row.get("locations") or []
+    if not locs and row.get("page"):
+        locs = [{"page": row["page"]}]
+    reason = row.get("scope_match_reason")
+    if not reason:
+        match = row.get("scope_match")
+        if match:
+            reason = f"Scope mentions '{match}'; material class only, not confirmation of scope."
+        elif row.get("origin") in ("drawing_bom", "drawing_bom_ai"):
+            reason = "No configured scope term matched this description; verify against the full scope."
+        else:
+            reason = row.get("basis") or "Verify this location against the drawing."
+    return [{**loc, "review_item": f"Item {row.get('tag_id', '')} - {row.get('description', '')}",
+             "review_reason": reason} for loc in locs]
+
+
+def _flag_locations(flag: dict, materials: list[dict]) -> list[dict]:
+    locations = flag.get("locations") or []
+    if locations:
+        return locations
+    if flag.get("page"):
+        if flag.get("x") is not None and flag.get("y") is not None:
+            return [{"page": flag["page"], "x": flag["x"], "y": flag["y"], "grid": flag.get("grid", "")}]
+        return [{"page": flag["page"]}]
+    if isinstance(flag.get("pages"), list):
+        return [{"page": page} for page in flag["pages"] if isinstance(page, int) and page > 0]
+    tag = flag.get("tag")
+    if tag:
+        return [loc for row in materials if row.get("tag_id") == tag for loc in _drawing_locations(row)]
+    return []
+
+
 def build_questions(flags: list[dict], materials: list[dict]) -> list[dict]:
     """Questions for every flag worth asking about; ids are stable (flag index + type)."""
     qs: list[dict] = []
@@ -162,9 +195,22 @@ def _question(i: int, f: dict, materials: list[dict]) -> dict | None:
                        "can't tell what they are.",
                 "choices": [], "fields": [{"key": t_, "label": t_, "default": ""} for t_ in tags]}
 
+    if t == "bom_scope_crosscheck":
+        rows = [m for m in materials if m.get("origin") in ("drawing_bom", "drawing_bom_ai")]
+        return {**base, "kind": "choice", "title": f.get("message", "")[:70],
+                "locations": [loc for row in rows for loc in _drawing_locations(row)],
+                "question": f.get("message", ""),
+                "why": "The scan compares configured material-class terms and aliases in the scope "
+                       "with BOM descriptions. It does not interpret the complete work scope or prove "
+                       "that a row is included or excluded. Use Show on drawing to review each row "
+                       "and its match reason; edit the BOM as needed.",
+                "choices": [("ack", "Reviewed - no change needed"),
+                            ("manual", "Needs manual BOM changes (I'll edit the table)")]}
+
     if t in ("no_text_layer", "legend_not_parsed", "tag_not_in_scope", "scope_tag_not_found",
              "scope_item_without_tag") or f.get("severity") in ("warning", "review"):
-        return {**base, "kind": "choice", "title": f.get("message", "")[:70],
+        locations = _flag_locations(f, materials)
+        return {**base, "kind": "choice", "title": f.get("message", "")[:70], "locations": locations,
                 "question": f.get("message", ""),
                 "why": "The scan found something it can't resolve on its own. Your answer is recorded on the BOM; "
                        "add or edit items in the table if it changes what is needed.",

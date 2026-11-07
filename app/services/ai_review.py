@@ -159,7 +159,7 @@ def _json_request(url: str, body: dict, headers: dict) -> dict:
 
 class OpenAIProvider(Provider):
     name = "openai"
-    label = "OpenAI"
+    label = "ChatGPT (OpenAI API)"
     default_model = "gpt-4o"
     default_base_url = "https://api.openai.com/v1"
 

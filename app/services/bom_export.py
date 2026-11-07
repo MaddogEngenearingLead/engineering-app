@@ -1,6 +1,12 @@
 from __future__ import annotations
 
 import json
+import csv
+import logging
+import re
+import shutil
+import uuid
+from contextlib import contextmanager
 from pathlib import Path
 from datetime import datetime
 from reportlab.lib.pagesizes import letter
@@ -11,7 +17,81 @@ from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER, TA_LEFT
 from xml.sax.saxutils import escape
 
+from pypdf import PdfReader
+
 from app.services.scope_work import summarize_scope
+
+logger = logging.getLogger(__name__)
+
+
+def job_export_id(job_number: str) -> str:
+    """Keep legacy names for ordinary job numbers without allowing path separators."""
+    return "JOB-" + job_number.replace("/", "-").replace("\\", "-")
+
+
+@contextmanager
+def staged_job_exports(output_dir: str):
+    """Keep unfinished job exports isolated from the published generation."""
+    directory = Path(output_dir)
+    directory.mkdir(parents=True, exist_ok=True)
+    stage = directory / (".bom-stage-" + uuid.uuid4().hex)
+    stage.mkdir()
+    try:
+        yield stage
+    finally:
+        shutil.rmtree(stage, ignore_errors=True)
+
+
+def publish_job_exports(job_id: str, stage: Path, paths: dict, output_dir: str, commit=None) -> dict:
+    """Verify all formats, then publish a generation and remove matching old exports."""
+    stage = stage.resolve()
+    directory = Path(output_dir)
+    sources = {}
+    for key, ext in (("bom_pdf", "pdf"), ("bom_json", "json"), ("bom_csv", "csv")):
+        value = paths.get(key)
+        if not value:
+            raise ValueError(f"Missing {key} export")
+        source = Path(value)
+        if source.is_symlink() or source.resolve().parent != stage or not source.is_file() or source.suffix != f".{ext}":
+            raise ValueError(f"Invalid {key} export")
+        sources[key] = source
+
+    with sources["bom_pdf"].open("rb") as f:
+        if f.read(5) != b"%PDF-":
+            raise ValueError("Invalid BOM PDF")
+        f.seek(0)
+        if not PdfReader(f, strict=True).pages:
+            raise ValueError("Empty BOM PDF")
+    with sources["bom_json"].open(encoding="utf-8") as f:
+        if not isinstance(json.load(f), dict):
+            raise ValueError("Invalid BOM JSON")
+    with sources["bom_csv"].open(encoding="utf-8", newline="") as f:
+        list(csv.reader(f, strict=True))
+
+    # A unique generation avoids overwriting a previous run within the same second.
+    generation = datetime.now().strftime("%Y%m%d_%H%M%S") + "_" + uuid.uuid4().hex
+    published = {}
+    try:
+        for key, source in sources.items():
+            target = directory / f"BOM_{job_id}_{generation}{source.suffix}"
+            source.replace(target)
+            published[key] = str(target.resolve())
+        if commit:
+            commit(published)
+    except Exception:
+        for path in published.values():
+            Path(path).unlink(missing_ok=True)
+        raise
+
+    pattern = re.compile(rf"BOM_{re.escape(job_id)}_\d{{8}}_\d{{6}}(?:_[0-9a-f]{{32}})?\.(?:pdf|json|csv)\Z")
+    keep = {Path(p).name for p in published.values()}
+    for path in directory.iterdir():
+        if path.name not in keep and pattern.fullmatch(path.name) and path.is_file() and not path.is_symlink():
+            try:
+                path.unlink()
+            except OSError:
+                logger.warning("Could not remove old BOM export %s", path, exc_info=True)
+    return published
 
 
 def export_bom_to_pdf(

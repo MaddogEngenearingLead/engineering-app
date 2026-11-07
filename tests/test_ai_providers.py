@@ -16,6 +16,28 @@ def test_provider_settings_keep_keys_separate(tmp_path, monkeypatch):
     assert ai_review.get_provider(settings).api_key == "anthropic-key"
 
 
+@pytest.mark.skipif(not os.environ.get("DISPLAY"), reason="Tk requires a display")
+def test_chatgpt_label_preserves_existing_openai_settings(tmp_path, monkeypatch):
+    from app.gui.job_manager_gui import AISettingsWindow
+
+    monkeypatch.setenv("AI_SETTINGS_FILE", str(tmp_path / "settings.json"))
+    ai_review.save_settings({"enabled": True, "provider": "openai", "api_key": "existing-key",
+                             "api_keys": {"openai": "existing-key"},
+                             "models": {"openai": "vision-model"}})
+    root = tk.Tk()
+    root.withdraw()
+    try:
+        window = AISettingsWindow(root)
+        assert window.provider.get() == "ChatGPT (OpenAI API)"
+        assert window.labels[window.provider.get()] == "openai"
+        assert window.key.get() == "existing-key" and window.model.get() == "vision-model"
+        window.save()
+        settings = ai_review.load_settings()
+        assert settings["provider"] == "openai" and settings["api_key"] == "existing-key"
+    finally:
+        root.destroy()
+
+
 @pytest.mark.parametrize("provider,expected_url", [
     (ai_review.OpenAIProvider("test"), "https://api.openai.com/v1/chat/completions"),
     (ai_review.OpenAICompatibleProvider("test", "vision-model", "https://example.test/v1"),

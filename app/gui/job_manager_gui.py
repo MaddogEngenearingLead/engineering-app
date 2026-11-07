@@ -20,9 +20,10 @@ from tkinter import messagebox, simpledialog, ttk
 from tkinterdnd2 import DND_FILES, TkinterDnD
 
 from app.job_manager import JobManager
-from app.gui.review_window import ReviewWindow
+from app.gui.review_window import LocationViewer, ReviewWindow
 from app.gui.scrolling import ScrollFrame
-from app.services.job_scan import run_job_scan
+from app.services.job_scan import load_current_clarification, run_job_scan
+from app.services.review_questions import build_questions
 from app.services.scope_work import approve_scope_draft, load_scope_draft
 from app.services.updater import (
     UpdateInfo, apply_update, can_self_update, check_for_update, check_for_update_status, download_update,
@@ -247,9 +248,11 @@ class JobManagerApp(TkinterDnD.Tk):
                     b.pack(side="left", padx=(6, 0))
                     b.bind("<Button-1>", lambda _e, p=path: self._open(p))
         elif status == "needs_clarification":
-            tk.Label(row, text="  Pages unclear", fg="#b36b00").pack(side="left")
+            tk.Label(row, text="  Scan needs clarification", fg="#b36b00").pack(side="left")
             tk.Button(row, text="Choose pages", relief="groove",
                       command=lambda n=number: self.choose_pages(n)).pack(side="left", padx=6)
+            tk.Button(row, text="View drawing issues", relief="groove",
+                      command=lambda n=number: self.review_scan_issues(n)).pack(side="left", padx=6)
         elif status == "needs_scope_review":
             tk.Label(row, text="  Scope review needed", fg="#b36b00").pack(side="left")
             tk.Button(row, text="Review scope", relief="groove",
@@ -277,6 +280,39 @@ class JobManagerApp(TkinterDnD.Tk):
 
     def open_review(self, job_number: str):
         ReviewWindow(self, self.jobs, job_number, on_saved=self.show_dashboard)
+
+    def review_scan_issues(self, job_number: str):
+        review = load_current_clarification(self.jobs, job_number)
+        if not review:
+            messagebox.showinfo("Drawing issues", "No scan issues are available.", parent=self)
+            return
+        flags = review.get("result", {}).get("questions", [])
+        questions = build_questions([{**f, "severity": f.get("severity", "review")} for f in flags], [])
+        questions = [q for q in questions if q.get("locations")]
+        if not questions:
+            messagebox.showinfo("Drawing issues", "No drawing locations are available for these issues.",
+                                parent=self)
+            return
+        dialog = tk.Toplevel(self)
+        dialog.title(f"Drawing issues - Job #{job_number}")
+        tk.Label(dialog, text="Select an issue to inspect its drawing location.").pack(anchor="w", padx=10, pady=5)
+        listing = tk.Listbox(dialog, width=100, height=min(10, len(questions)))
+        listing.pack(fill="both", expand=True, padx=10, pady=5)
+        for q in questions:
+            listing.insert("end", q["question"])
+        listing.selection_set(0)
+
+        def show():
+            selection = listing.curselection()
+            if not selection:
+                return
+            q = questions[selection[0]]
+            try:
+                LocationViewer(dialog, review["pid_file"], q["title"], q["locations"], question=q)
+            except Exception as exc:
+                messagebox.showerror("Drawing issues", f"Could not open the drawing: {exc}", parent=dialog)
+
+        tk.Button(dialog, text="Show on drawing", command=show).pack(pady=5)
 
     def review_scope(self, job_number: str):
         try:
@@ -395,6 +431,7 @@ class AISettingsWindow(tk.Toplevel):
         self.provider.bind("<<ComboboxSelected>>", self._change_provider)
         tk.Label(self.body, justify="left", fg="#555", text=(
             "Each provider needs its own API key and vision-capable model.\n"
+            "ChatGPT uses an OpenAI API key; ChatGPT subscriptions do not include API access.\n"
             "Grok, Groq, Mistral, OpenRouter and Together require a model ID.\n"
             "When enabled, drawing pages and scope are sent to the selected provider.\n"
             "AI-transcribed BOM rows are provisional and must be checked.")
