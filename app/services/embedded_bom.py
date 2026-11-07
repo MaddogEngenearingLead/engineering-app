@@ -70,7 +70,7 @@ def extract_embedded_bom(pdf) -> list[dict]:
     for pno, page in enumerate(pdf.pages, 1):
         try:
             text = (page.extract_text() or "").upper()
-            if "ITEM #" not in text or "QTY" not in text:
+            if "ITEM" not in text or "QTY" not in text:
                 continue
             tables = page.extract_tables()
         except Exception:
