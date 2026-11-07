@@ -140,7 +140,7 @@ def export_bom_to_pdf(
             Paragraph(str(material.get('tag_id', '')), cell),
             Paragraph(str(material.get('description', '')), cell),
             Paragraph(str(material.get('type', '')).replace('_', ' ').title(), cell),
-            str(material.get('quantity', '')),
+            str(material.get('quantity') if material.get('quantity') is not None else ''),
             material.get('unit', ''),
             Paragraph(str(material.get('location') or '-'), cell),
             f"{material.get('confidence', 0):.0%}",

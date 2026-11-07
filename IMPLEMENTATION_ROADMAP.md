@@ -1,7 +1,8 @@
 # Roadmap
 
-**Product:** a local-only desktop app that compares a P&ID to a scope of work and produces a
-scope-accurate BOM, with interactive review. **Current release: v0.1.10.**
+**Product:** a desktop app that compares a P&ID to a scope of work and produces a
+scope-accurate BOM, with interactive review. Processing is local by default; optional AI review
+sends drawing and scope data to its provider. **Current release: v0.1.19.**
 
 The original plan (FastAPI + Postgres/Mongo/Neo4j/Redis web platform) was replaced by this
 desktop-first direction. Databases, queues, OCR services and user accounts were never built and
@@ -18,7 +19,7 @@ Legend: ✅ done · 🟡 partly done · ⬜ not started
 | 2 | One-click packaged app and auto-update | ✅ |
 | 3 | Scope-accurate item selection and locations | ✅ |
 | 4 | Interactive review and clarification | ✅ |
-| 5 | Accuracy on more drawings | 🟡 next |
+| 5 | Accuracy on more drawings | 🟡 in progress |
 | 6 | Quality and distribution polish | ⬜ |
 
 ### Phase 0 – Foundation ✅
@@ -50,12 +51,14 @@ Legend: ✅ done · 🟡 partly done · ⬜ not started
   resolve the flag, appear on the PDF, can be changed, and survive regeneration.
 - Dashboard shows only the PDF; CSV/JSON are internal.
 
-### Phase 5 – Accuracy on more drawings 🟡 next
+### Phase 5 – Accuracy on more drawings 🟡 in progress
+- Optional AI fallback reads the drawing index to classify demo and new-work pages (v0.1.18).
 - [ ] Run on additional real P&ID/scope pairs and add anonymised fixtures for regression tests.
 - [ ] Count unlabelled valve/flange/fitting symbols from the symbol legend (today: scope-only rows).
 - [ ] Piping footage: use a scale or let the user mark lengths on the viewer (today: manual entry in a question).
 - [ ] Tune the scope-reference matcher (tag/code/name) on more vocabularies; make the threshold configurable.
-- [ ] OCR for drawings without a text layer (today: flagged, not read).
+- [ ] Broaden OCR beyond image-only BOM/revision areas to drawing labels and symbols;
+  OCR-extracted BOM rows and revision text still need manual verification.
 - [ ] Support other markup conventions (non-green/red/blue) via a user-chosen colour mapping.
 
 ### Phase 6 – Quality and distribution ⬜
@@ -65,9 +68,3 @@ Legend: ✅ done · 🟡 partly done · ⬜ not started
 - [ ] Revision comparison: re-scan a revised P&ID and show what changed against the previous BOM.
 - [ ] Export options (Excel BOM, per-area grouping) if requested.
 - [ ] Decide the fate of the legacy HTTP API and `frontend/` (keep as scripting API, or remove).
-
-## Housekeeping done in this review
-- Removed dead code and docs from the old web-platform plan (unused root `app_*.py`, a separate
-  AI-pipeline requirements file, stale setup/audit reports).
-- `requirements.txt` now lists only what the app imports; unused database/queue packages were removed.
-- Docs rewritten for the desktop app.

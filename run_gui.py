@@ -18,6 +18,16 @@ def selftest() -> int:
     from app.services.job_scan import run_job_scan
 
     assert Path(certifi.where()).is_file(), "CA bundle missing"
+    bundle = Path(getattr(sys, "_MEIPASS", "")) / "tesseract"
+    if getattr(sys, "frozen", False) and bundle.is_dir():
+        from PIL import Image, ImageDraw, ImageFont
+        from app.services.drawing_ocr import _searchable_page
+
+        image = Image.new("RGB", (900, 180), "white")
+        ImageDraw.Draw(image).text((30, 30), "BILL OF MATERIALS", font=ImageFont.load_default(size=48), fill="black")
+        text, _, _, _ = _searchable_page(image, 150)
+        assert "MATERIALS" in text.upper(), "bundled OCR failed"
+        print("SELFTEST bundled OCR ok")
     d = Path(tempfile.mkdtemp())
     c = canvas.Canvas(str(d / "pid.pdf"))
     c.drawString(72, 750, "DEMOLITION P&ID"); c.drawString(72, 720, "TK-1 TANK"); c.showPage()

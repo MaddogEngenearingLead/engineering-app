@@ -5,7 +5,9 @@ or macOS (-> dist/JobManager.app) or use the "Build GUI" GitHub Actions workflow
 
 The BOM scan runs inside the app, so the PDF/BOM libraries are bundled too.
 """
+import os
 import sys
+from pathlib import Path
 
 import PyInstaller.__main__
 
@@ -26,6 +28,14 @@ args = [
     "--hidden-import", "openpyxl",
     "--noconfirm",
 ]
+bundle_dir = os.environ.get("TESSERACT_BUNDLE_DIR")
+if bundle_dir:
+    root = Path(bundle_dir).expanduser().resolve()
+    executable = root / ("tesseract.exe" if sys.platform.startswith("win") else "tesseract")
+    if not all(path.is_file() for path in (executable, root / "tessdata" / "eng.traineddata",
+                                           root / "tessdata" / "pdf.ttf")):
+        raise SystemExit("TESSERACT_BUNDLE_DIR must contain tesseract, tessdata/eng.traineddata and tessdata/pdf.ttf.")
+    args += ["--add-data", f"{root}{os.pathsep}tesseract"]
 # --onefile with --windowed is deprecated on macOS, which builds a .app bundle instead
 if sys.platform != "darwin":
     args.append("--onefile")

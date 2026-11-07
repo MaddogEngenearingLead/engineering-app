@@ -14,10 +14,12 @@ import base64
 import io
 import json
 import logging
+import math
 import os
 import re
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -33,7 +35,8 @@ class AIError(Exception):
 
 # ---------------------------------------------------------------- settings
 
-DEFAULTS = {"enabled": False, "provider": "gemini", "api_key": "", "models": {}}
+DEFAULTS = {"enabled": False, "provider": "gemini", "api_key": "", "api_keys": {},
+            "models": {}, "base_urls": {}}
 
 
 def settings_path() -> Path:
@@ -50,8 +53,14 @@ def load_settings() -> dict:
         data.update(json.loads(settings_path().read_text(encoding="utf-8")))
     except (OSError, ValueError):
         pass
-    if not data.get("api_key"):
-        data["api_key"] = os.environ.get("GEMINI_API_KEY", "") if data.get("provider") == "gemini" else ""
+    provider = data.get("provider")
+    keys = dict(data.get("api_keys") or {})
+    if data.get("api_key") and provider not in keys:
+        keys[provider] = data["api_key"]
+    if provider == "gemini" and not keys.get(provider):
+        keys[provider] = os.environ.get("GEMINI_API_KEY", "")
+    data["api_keys"] = keys
+    data["api_key"] = keys.get(provider, "")
     return data
 
 
@@ -72,9 +81,10 @@ class Provider:
     label = ""
     default_model = ""
 
-    def __init__(self, api_key: str, model: str | None = None):
+    def __init__(self, api_key: str, model: str | None = None, base_url: str | None = None):
         self.api_key = api_key
         self.model = model or self.default_model
+        self.base_url = base_url
 
     def generate(self, prompt: str, images: list[bytes]) -> str:
         """Send the prompt and PNG page images; return the model's JSON text reply."""
@@ -126,7 +136,95 @@ def _http_message(exc: urllib.error.HTTPError) -> str:
     return f"{hints.get(exc.code, 'AI service error')} ({exc.code}). {detail[:160]}".strip()
 
 
-PROVIDERS: dict[str, type[Provider]] = {GeminiProvider.name: GeminiProvider}
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+def _json_request(url: str, body: dict, headers: dict) -> dict:
+    request = urllib.request.Request(url, data=json.dumps(body).encode(), method="POST", headers=headers)
+    try:
+        with urllib.request.build_opener(_NoRedirect()).open(request, timeout=240) as response:
+            data = json.loads(response.read())
+    except urllib.error.HTTPError as exc:
+        raise AIError(f"AI service returned HTTP {exc.code}.") from None
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        raise AIError(f"Could not reach AI service: {getattr(exc, 'reason', exc)}") from None
+    except ValueError:
+        raise AIError("AI service returned invalid JSON.") from None
+    if not isinstance(data, dict):
+        raise AIError("AI service returned an invalid response.")
+    return data
+
+
+class OpenAIProvider(Provider):
+    name = "openai"
+    label = "OpenAI"
+    default_model = "gpt-4o"
+    default_base_url = "https://api.openai.com/v1"
+
+    def generate(self, prompt: str, images: list[bytes]) -> str:
+        base = self.base_url or self.default_base_url
+        parsed = urllib.parse.urlsplit(base)
+        if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment:
+            raise AIError("The OpenAI-compatible base URL must be an HTTPS URL without credentials or a query.")
+        parts = [{"type": "text", "text": prompt}]
+        parts.extend({"type": "image_url", "image_url": {"url": "data:image/png;base64," +
+                      base64.b64encode(image).decode()}} for image in images)
+        payload = _json_request(base.rstrip("/") + "/chat/completions",
+                                {"model": self.model, "messages": [{"role": "user", "content": parts}]},
+                                {"Content-Type": "application/json", "Authorization": f"Bearer {self.api_key}"})
+        try:
+            if payload["choices"][0].get("finish_reason") == "length":
+                raise AIError("AI response was truncated; use a smaller drawing or another model.")
+            text = payload["choices"][0]["message"]["content"]
+            if not isinstance(text, str) or not text:
+                raise ValueError
+            return text
+        except (KeyError, IndexError, TypeError, ValueError):
+            raise AIError("AI service returned no text answer.") from None
+
+
+class OpenAICompatibleProvider(OpenAIProvider):
+    name = "openai_compatible"
+    label = "OpenAI-compatible (custom endpoint)"
+    default_model = ""
+    default_base_url = ""
+
+    def generate(self, prompt: str, images: list[bytes]) -> str:
+        if not self.base_url or not self.model:
+            raise AIError("Set the model and HTTPS base URL for the OpenAI-compatible provider.")
+        return super().generate(prompt, images)
+
+
+class AnthropicProvider(Provider):
+    name = "anthropic"
+    label = "Anthropic Claude"
+    default_model = "claude-sonnet-4-5"
+
+    def generate(self, prompt: str, images: list[bytes]) -> str:
+        content = [{"type": "text", "text": prompt}]
+        content.extend({"type": "image", "source": {"type": "base64", "media_type": "image/png",
+                       "data": base64.b64encode(image).decode()}} for image in images)
+        payload = _json_request("https://api.anthropic.com/v1/messages",
+                                {"model": self.model, "max_tokens": 8192,
+                                 "messages": [{"role": "user", "content": content}]},
+                                {"Content-Type": "application/json", "x-api-key": self.api_key,
+                                 "anthropic-version": "2023-06-01"})
+        if payload.get("stop_reason") == "max_tokens":
+            raise AIError("AI response was truncated; use a smaller drawing or another model.")
+        try:
+            text = "".join(part["text"] for part in payload["content"] if part["type"] == "text")
+            if not text:
+                raise ValueError
+            return text
+        except (KeyError, TypeError, ValueError):
+            raise AIError("AI service returned no text answer.") from None
+
+
+PROVIDERS: dict[str, type[Provider]] = {cls.name: cls for cls in
+                                       (GeminiProvider, OpenAIProvider, AnthropicProvider,
+                                        OpenAICompatibleProvider)}
 
 
 def get_provider(settings: dict | None = None) -> Provider:
@@ -134,9 +232,11 @@ def get_provider(settings: dict | None = None) -> Provider:
     cls = PROVIDERS.get(s.get("provider"))
     if not cls:
         raise AIError(f"Unknown AI provider '{s.get('provider')}'.")
-    if not s.get("api_key"):
+    key = (s.get("api_keys") or {}).get(cls.name) or s.get("api_key")
+    if not key:
         raise AIError("No API key set. Add one in AI settings.")
-    return cls(s["api_key"], (s.get("models") or {}).get(cls.name))
+    base_url = (s.get("base_urls") or {}).get(cls.name) if cls is OpenAICompatibleProvider else None
+    return cls(key, (s.get("models") or {}).get(cls.name), base_url)
 
 
 def is_enabled() -> bool:
@@ -162,6 +262,81 @@ def render_pages(pdf_path: str, limit: int = MAX_PAGES, max_pixels: int = MAX_PI
     finally:
         pdf.close()
     return out
+
+
+def render_bom_regions(pdf_path: str, page_number: int) -> list[bytes]:
+    """Render overlapping left and right regions of one page for detailed transcription."""
+    import pypdfium2 as pdfium
+
+    pdf = pdfium.PdfDocument(pdf_path)
+    try:
+        if not 1 <= page_number <= len(pdf):
+            raise AIError(f"BOM page {page_number} is outside the drawing.")
+        page = pdf[page_number - 1]
+        try:
+            w, h = page.get_size()
+            image = page.render(scale=min(3.0, 4800 / max(w, h))).to_pil().convert("RGB")
+            out = []
+            for left, right in ((0, 0.53), (0.47, 1)):
+                region = image.crop((int(image.width * left), 0, int(image.width * right), image.height))
+                buf = io.BytesIO()
+                region.save(buf, format="PNG", optimize=True)
+                out.append(buf.getvalue())
+            return out
+        finally:
+            page.close()
+    finally:
+        pdf.close()
+
+
+_BOM_TRANSCRIPTION_PROMPT = """Transcribe only the printed bill of materials visible in this drawing
+region. The region is part of page {page}. Do not infer missing rows or values. Do not treat
+references, headings or drawing notes as material rows. Return JSON:
+{{"complete": true or false, "items": [{{"item": "printed item number",
+"description": "exact material description", "quantity": number or null,
+"unit": "ea", "ft", or "" for unknown, "notes": "uncertainty or empty"}}]}}.
+Use null for quantities that are missing, illegible, or stated as required.
+Set complete false if any row is cut off, illegible, or omitted. Return an empty items array
+if this region has no readable BOM rows. Preserve approximate quantities in notes."""
+
+
+def transcribe_bom_with_ai(pdf_path: str, page_number: int, provider: Provider | None = None) -> dict:
+    """Transcribe a suspect BOM page; all returned rows remain unverified suggestions."""
+    provider = provider or get_provider()
+    regions = render_bom_regions(pdf_path, page_number)
+    items: dict[str, dict] = {}
+    issues: list[str] = []
+    for region_no, image in enumerate(regions, 1):
+        reply = parse_reply(provider.generate(_BOM_TRANSCRIPTION_PROMPT.format(page=page_number), [image]))
+        if not isinstance(reply.get("complete"), bool) or not isinstance(reply.get("items"), list):
+            raise AIError(f"AI response for BOM page {page_number}, region {region_no}, has an invalid shape.")
+        if not reply["complete"]:
+            issues.append(f"region {region_no} may be incomplete")
+        for item in reply["items"]:
+            if not isinstance(item, dict):
+                raise AIError(f"AI returned an invalid BOM row on page {page_number}.")
+            tag = item.get("item")
+            desc = item.get("description")
+            qty = item.get("quantity")
+            unit = item.get("unit")
+            notes = item.get("notes", "")
+            if (not isinstance(tag, str) or not re.fullmatch(r"\d{1,4}\*?", tag.strip())
+                    or not isinstance(desc, str) or not desc.strip() or len(desc) > 500
+                    or (qty is not None and (isinstance(qty, bool) or not isinstance(qty, (int, float))
+                                             or not math.isfinite(qty) or qty < 0))
+                    or not isinstance(unit, str) or unit.lower() not in ("", "ea", "ft")
+                    or (qty is not None and not unit)
+                    or not isinstance(notes, str) or len(notes) > 500):
+                raise AIError(f"AI returned an invalid BOM row on page {page_number}.")
+            tag = tag.strip().rstrip("*")
+            row = {"item": tag, "description": desc.strip(), "quantity": qty,
+                   "unit": unit.lower() if qty is not None else "", "notes": notes.strip()}
+            if tag in items and items[tag] != row:
+                raise AIError(f"AI returned conflicting readings for BOM item {tag} on page {page_number}.")
+            items[tag] = row
+    if not items:
+        raise AIError(f"AI found no usable BOM rows on page {page_number}.")
+    return {"items": list(items.values()), "issues": issues, "provider": provider.name, "model": provider.model}
 
 
 PROMPT = """You are a piping/instrumentation estimator checking a bill of materials (BOM).

@@ -1,9 +1,11 @@
 # Engineering App – P&ID vs Scope-of-Work BOM
 
-A **local-only desktop app** that reads a P&ID drawing (PDF), compares it with a
-scope-of-work document, and produces a bill of materials (BOM) containing only
-what the scope calls for. Nothing leaves the computer: there are no accounts, no
-login and no cloud service. The app only contacts GitHub to check for updates.
+A desktop app that reads a P&ID drawing (PDF), compares it with a scope-of-work
+document, and produces a bill of materials (BOM) containing only what the scope
+calls for. By default, drawings and scope documents are processed locally; there
+are no accounts or login. The app contacts GitHub to check for updates. Optional
+AI review is off by default and, when enabled, sends drawing pages, the scope,
+and the scanned BOM to the selected AI provider.
 
 ## How it works
 
@@ -17,6 +19,8 @@ login and no cloud service. The app only contacts GitHub to check for updates.
    - adds scope-only rows for work the scope lists but the drawing cannot count
      (valves, flanges, supports), anchored to a page or nearby equipment;
    - lists highlighted piping runs by size.
+   - when a drawing package contains a printed BOM, reads it as the master list
+     instead, preserving all rows and flagging scope matches for review.
 3. **Review / clarify** – open the review window to:
    - see every item with its location and why it is on the BOM;
    - use **Show on drawing** with Previous/Next and zoom to look at each location;
@@ -52,7 +56,11 @@ installer is described in [`installer/README.md`](installer/README.md).
 
 ## Run from source (developers)
 
-Requires Python 3.12 (3.10+ should work) and, on Linux, `python3-tk`.
+Requires Python 3.12 and, on Linux, `python3-tk`.
+For image-only BOM sheets and revision areas, install Tesseract OCR with English
+language data and make `tesseract` available on `PATH`, or build with a compatible
+Tesseract bundle (see `SETUP.md`). OCR runs locally and is optional; the app
+reports when it is unavailable. Standard releases do not currently bundle it.
 
 ```bash
 python -m venv .venv
@@ -112,7 +120,10 @@ question flow; that lives in the desktop app.
 - Valve, flange and fitting **symbols without text labels cannot be counted**; they appear as scope-only rows with a page or equipment location.
 - Piping is listed by size as runs, not footage (no drawing scale is measured).
 - Colour/boldness detection assumes the green/red/blue markup convention; other conventions fall back to "highlighted, or named in scope".
-- Scanned drawings without a text layer need OCR, which is not implemented.
+- OCR is limited to identifying image-only BOM sheets and revision areas. OCR text
+  and reconstructed table rows require manual verification; other scanned drawing
+  content, tags, and symbols are not read by OCR. Complex or low-resolution
+  tables may not reconstruct; use a text-layer PDF or check the source manually.
 
 ## Roadmap
 
@@ -130,6 +141,23 @@ Nothing is tied to a particular drawing. Codes come from each drawing's own lege
 {"codes": {"XYZ": "Custom Device"}, "ignore_prefixes": ["DWG"], "scope_aliases": {"Pneumatic Valve": ["POV"]}}
 ```
 
-## Optional AI review (Gemini)
+For printed BOMs, `scope_aliases` also maps a scope term to words in material
+descriptions, for example `"Jointing": ["GASKET"]`. Built-in bulk-material
+aliases cover flanges, gaskets, bolts, nuts and bolting. A terminology match does
+not verify size, rating, quantity, responsibility or whether work is in scope:
+all printed rows remain in the master list for review. Unstated quantities are
+left blank instead of assumed to be one.
 
-Click **AI settings** on the dashboard, tick the box, and paste a free Gemini key (aistudio.google.com/apikey). When on, each BOM scan also sends the drawing pages and scope to the AI, which finds the legend and suggests missing or unneeded items. Suggestions show up as questions and change nothing until you approve them. If the AI is unavailable the normal scan still completes. The provider is pluggable (`PROVIDERS` in `app/services/ai_review.py`). Settings are stored in `%LOCALAPPDATA%\EngineeringApp\ai_settings.json`.
+## Optional AI review
+
+Click **AI settings** on the dashboard, enable AI, select Google Gemini, OpenAI,
+Anthropic Claude, or an OpenAI-compatible provider, and enter that provider's API
+key and a vision-capable model. For a compatible provider, also supply its HTTPS
+API base URL (typically ending in `/v1`); the service must support image inputs.
+Available models, costs and image limits depend on the provider. Not every AI
+service supports this protocol. Provider keys are stored separately in the local
+settings file as plaintext. When enabled, drawing pages, scope, and BOM data are sent to the
+selected provider; AI's missing/unneeded item suggestions change nothing until
+you approve them.
+
+If OCR identifies a BOM page but cannot reconstruct its table, enabled AI also receives overlapping images of that page and attempts a transcription before clarification is requested. If OCR is unavailable, image-only pages are sent for the same attempt. Its rows appear in the generated draft BOM as **unverified**; review every row, quantity, unit, scope and completeness against the drawing. If AI cannot provide usable rows, clarification is still required. The provider is pluggable (`PROVIDERS` in `app/services/ai_review.py`). Settings are stored in `%LOCALAPPDATA%\EngineeringApp\ai_settings.json` on Windows, or under `$XDG_CONFIG_HOME/EngineeringApp/` (default `~/.config/EngineeringApp/`) on macOS and Linux.

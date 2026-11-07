@@ -30,6 +30,11 @@ def test_macos_asset(monkeypatch):
     assert updater.check_for_update("1.0.0").asset_name == "JobManager-macos.zip"
 
 
+def test_update_token_is_sent_as_bearer(monkeypatch):
+    monkeypatch.setenv("UPDATE_TOKEN", "test-token")
+    assert updater._headers("application/json")["Authorization"] == "Bearer test-token"
+
+
 def test_no_update_when_current(monkeypatch):
     _patch(monkeypatch, 200, _release("v1.0.0", ["JobManager.exe"]))
     assert updater.check_for_update("1.0.0") is None

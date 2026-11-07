@@ -226,6 +226,8 @@ class ItemDialog(simpledialog.Dialog):
         return None
 
     def validate(self):
+        if not self.vars["quantity"].get().strip():
+            return True
         try:
             float(self.vars["quantity"].get())
         except ValueError:
@@ -235,8 +237,11 @@ class ItemDialog(simpledialog.Dialog):
 
     def apply(self):
         values = {k: v.get().strip() for k, v in self.vars.items()}
-        q = float(values["quantity"])
-        values["quantity"] = int(q) if q == int(q) else q
+        if values["quantity"]:
+            q = float(values["quantity"])
+            values["quantity"] = int(q) if q == int(q) else q
+        else:
+            values["quantity"] = None
         self.result = values
 
 
@@ -316,7 +321,7 @@ class ReviewWindow(tk.Toplevel):
             if m.get("note"):
                 desc += f"  [{m['note']}]"
             self.tree.insert("", "end", iid=str(i), values=(
-                i + 1, m.get("tag_id", ""), desc, m.get("quantity", ""),
+                i + 1, m.get("tag_id", ""), desc, m.get("quantity") if m.get("quantity") is not None else "",
                 m.get("location") or "-", m.get("basis", "")))
 
     def _selected(self) -> int | None:

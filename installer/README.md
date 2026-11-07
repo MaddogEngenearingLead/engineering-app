@@ -40,7 +40,7 @@ Output installer is generated in `installer\Output\` as:
 ## What the installer does
 
 - Installs to `C:\Program Files\Engineering App` (default)
-- Copies `JobManager.exe` and required files
+- Installs the single-file `JobManager.exe`; PyInstaller bundles the runtime and dependencies
 - Creates Start Menu shortcut
 - Creates desktop shortcut (default task)
 - Adds "Launch Engineering App" checkbox on completion

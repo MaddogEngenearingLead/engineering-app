@@ -30,7 +30,7 @@ from app.services.pid_extraction import (
     infer_equipment_type,
 )
 from app.services.bom_select import select_items
-from app.services.embedded_bom import extract_embedded_bom
+from app.services.embedded_bom import ai_bom_rows, extract_embedded_bom
 from app.services.pid_markup import markup_items, parse_symbol_legend
 
 logger = logging.getLogger(__name__)
@@ -774,10 +774,11 @@ def _export_all(materials, flags, notes, scope_text, pdf_path, job_id, source_fi
     return out
 
 
-def _embedded_result(rows, pdf_path, scope_text, job_id, source_file, output_dir, review_notes, n_pages):
-    flags = [{"type": "embedded_bom", "severity": "info",
-              "message": f"The drawing package prints its own bill of materials ({len(rows)} items); "
-                         "it was read directly instead of being inferred from tags."}]
+def _embedded_result(rows, pdf_path, scope_text, job_id, source_file, output_dir, review_notes, n_pages,
+                     extraction_flags):
+    flags = extraction_flags + [{"type": "embedded_bom", "severity": "info",
+              "message": f"The drawing package contains {len(rows)} BOM rows; "
+                         "verify the extraction and scope before procurement."}]
     for r in rows:
         if r["notes"]:
             flags.append({"type": "bom_quantity_note", "severity": "review",
@@ -786,12 +787,13 @@ def _embedded_result(rows, pdf_path, scope_text, job_id, source_file, output_dir
     exp = _export_all(rows, flags, notes, scope_text, pdf_path, job_id or "job", source_file, output_dir)
     return {
         "status": "completed", "job_number": None, "demo_pages": [], "new_work_pages": [],
-        "classification_method": "embedded_bom", "classification_confidence": 1.0,
+        "classification_method": "embedded_bom",
+        "classification_confidence": min((r.get("confidence", 0.0) for r in rows), default=0.0),
         "legend": {"page": None, "key_page": None, "found": False, "entries_found": 0, "abbreviations": {},
                    "symbol_legend": {}, "instrument_key_entries": 0},
         "colour_scheme": {}, "detected_assets": [], "excluded_items": [], "demolished_items": [],
         "summary": {"embedded_bom_items": len(rows), "drawing_items": len(rows),
-                    "drawing_item_count": sum(r["quantity"] for r in rows), "scope_only_items": 0,
+                    "drawing_item_count": len(rows), "scope_only_items": 0,
                     "pages": n_pages},
         "scope_text": scope_text or "", "materials": rows, "flags": flags, **exp,
     }
@@ -818,14 +820,56 @@ def build_scoped_bom(
         raise RuntimeError("pdfplumber is required")
     with pdfplumber.open(pdf_path) as pdf:
         n_pages = len(pdf.pages)
-        sigs = [extract_page_content_signature(pdf, n) for n in range(1, n_pages + 1)]
-        by_page = {s["page"]: s for s in sigs}
+        extraction_flags: list[dict] = []
+        embedded = extract_embedded_bom(pdf, scope_text or "", extraction_flags)
+        unreadable = [f for f in extraction_flags
+                      if f["type"] == "ocr_unavailable" or
+                      (f["type"] == "ocr_bom" and not f.get("reconstructed"))]
+        if unreadable:
+            from app.services import ai_review
 
-        embedded = extract_embedded_bom(pdf)
+            if ai_review.is_enabled():
+                for flag in unreadable:
+                    page = flag.get("page")
+                    if not isinstance(page, int) or not 1 <= page <= n_pages:
+                        continue
+                    try:
+                        transcription = ai_review.transcribe_bom_with_ai(pdf_path, page)
+                    except ai_review.AIError as exc:
+                        logger.warning("AI BOM transcription failed on page %s: %s", page, exc)
+                        extraction_flags.append({"type": "ai_bom_failed", "severity": "warning", "page": page,
+                                                 "message": f"AI could not transcribe BOM page {page}: {exc}"})
+                        continue
+                    proposed = ai_bom_rows(transcription, page, scope_text or "")
+                    existing = {r["tag_id"] for r in embedded}
+                    duplicates = [r["tag_id"] for r in proposed if r["tag_id"] in existing]
+                    embedded.extend(r for r in proposed if r["tag_id"] not in existing)
+                    flag["ai_transcribed"] = True
+                    flag["severity"] = "info"
+                    flag["message"] = f"OCR could not reconstruct page {page}; AI transcription was attempted."
+                    detail = "; ".join(transcription["issues"])
+                    if duplicates:
+                        detail = "; ".join(filter(None, (detail, "duplicate item numbers require review")))
+                    extraction_flags.append({
+                        "type": "ai_bom_transcription", "severity": "review", "page": page,
+                        "message": f"AI transcribed {len(proposed)} provisional BOM rows from page {page}. "
+                                   "Verify every row, quantity, unit, scope and completeness against the drawing"
+                                   + (f" ({detail})." if detail else "."),
+                    })
+                for i, row in enumerate(embedded, 1):
+                    row["item_number"] = i
         if embedded:
             return _embedded_result(embedded, pdf_path, scope_text, job_id, source_file, output_dir,
-                                    review_notes, n_pages)
+                                    review_notes, n_pages, extraction_flags)
+        if unreadable:
+            return _clarification(extraction_flags + [{
+                "type": "ocr_bom_unreadable",
+                "message": "Image-only pages or suspected BOM tables could not be reconstructed. "
+                           "Use a text-layer PDF or review the drawing manually.",
+            }])
 
+        sigs = [extract_page_content_signature(pdf, n) for n in range(1, n_pages + 1)]
+        by_page = {s["page"]: s for s in sigs}
         # 1. page classification (overrides win)
         mapping = normalise_highlight_mapping(highlight_mapping)
         auto = classify_signatures(sigs, mapping)
@@ -846,7 +890,7 @@ def build_scoped_bom(
                 if ai_note:
                     method, confidence = "ai_index", 0.8
             if auto["ambiguous"] and not ai_note:
-                return _clarification([{
+                return _clarification(extraction_flags + [{
                     "type": "demo_work_pages_ambiguous",
                     "message": "Could not determine which pages are demo and which are new work.",
                     "candidate_pairs": auto["candidate_pairs"],
@@ -854,7 +898,7 @@ def build_scoped_bom(
                     "accept_parameter": "demo_pages / new_work_pages",
                 }])
         if not new:
-            return _clarification([{
+            return _clarification(extraction_flags + [{
                 "type": "demo_work_pages_ambiguous",
                 "message": "No new-work pages identified.",
                 "candidate_pairs": auto["candidate_pairs"],
@@ -862,13 +906,14 @@ def build_scoped_bom(
             }])
 
         # 2. legend / instrument key
-        flags: list[dict] = []
+        flags: list[dict] = extraction_flags
         if ai_note:
             flags.append({"type": "pages_from_ai", "severity": "info", "message": ai_note})
         for page_no in _no_text_pages(sigs):
-            flags.append({"type": "no_text_layer", "severity": "warning", "page": page_no,
-                          "message": f"Page {page_no} has no readable text (scanned image?). "
-                                     "Tags and legend on it cannot be read; OCR is not supported."})
+            if not any(f["type"] == "no_text_layer" and f.get("page") == page_no for f in flags):
+                flags.append({"type": "no_text_layer", "severity": "warning", "page": page_no,
+                              "message": f"Page {page_no} has no readable text (scanned image?). "
+                                         "Drawing tags and legend cannot be read by OCR."})
         legend_pg = legend_page if legend_page and 1 <= legend_page <= n_pages else find_legend_page(pdf)
         abbreviations: dict = {}
         if legend_pg:

@@ -336,37 +336,59 @@ class AISettingsWindow(tk.Toplevel):
                        next(iter(self.labels)))
         self.provider.set(current)
         self.provider.pack(anchor="w")
+        self.active_provider = self.labels[current]
         tk.Label(self.body, text="API key:").pack(anchor="w", pady=(12, 0))
         self.key = tk.Entry(self.body, width=48, show="*")
         self.key.insert(0, self.settings.get("api_key", ""))
         self.key.pack(anchor="w")
-        tk.Label(self.body, text="Model (leave blank for the default; change if Google retires it):"
+        tk.Label(self.body, text="Vision-capable model (leave blank for the provider default):"
                  ).pack(anchor="w", pady=(12, 0))
         self.model = tk.Entry(self.body, width=48)
         self.model.insert(0, (self.settings.get("models") or {}).get(self.settings.get("provider"), ""))
         self.model.pack(anchor="w")
+        tk.Label(self.body, text="Custom OpenAI-compatible HTTPS base URL (include /v1):").pack(anchor="w", pady=(12, 0))
+        self.base_url = tk.Entry(self.body, width=48)
+        self.base_url.insert(0, (self.settings.get("base_urls") or {}).get(self.active_provider, ""))
+        self.base_url.pack(anchor="w")
+        self.provider.bind("<<ComboboxSelected>>", self._change_provider)
         tk.Label(self.body, justify="left", fg="#555", text=(
-            "Get a free Gemini key at aistudio.google.com/apikey.\n"
-            "When on, the drawing pages and scope are sent to the provider.\n"
-            "AI findings appear as questions; nothing changes unless you approve it.")
+            "Each provider needs its own API key and vision-capable model.\n"
+            "When enabled, drawing pages and scope are sent to the selected provider.\n"
+            "AI-transcribed BOM rows are provisional and must be checked.")
         ).pack(anchor="w", pady=(10, 0))
         row = tk.Frame(self.body)
         row.pack(anchor="e", pady=(14, 0))
         tk.Button(row, text="Cancel", command=self.destroy, width=10).pack(side="right", padx=(6, 0))
         tk.Button(row, text="Save", command=self.save, width=10, bg="#2196F3", fg="white").pack(side="right")
 
+    def _remember_fields(self):
+        for field, value in (("api_keys", self.key.get()), ("models", self.model.get()),
+                             ("base_urls", self.base_url.get())):
+            values = dict(self.settings.get(field) or {})
+            if value.strip():
+                values[self.active_provider] = value.strip()
+            else:
+                values.pop(self.active_provider, None)
+            self.settings[field] = values
+
+    def _change_provider(self, _event=None):
+        self._remember_fields()
+        self.active_provider = self.labels[self.provider.get()]
+        for widget, field in ((self.key, "api_keys"), (self.model, "models"), (self.base_url, "base_urls")):
+            widget.delete(0, "end")
+            widget.insert(0, (self.settings.get(field) or {}).get(self.active_provider, ""))
+
     def save(self):
         key = self.key.get().strip()
         if self.enabled.get() and not key:
             messagebox.showwarning("AI settings", "Enter an API key to turn AI review on.", parent=self)
             return
-        name = self.labels[self.provider.get()]
-        models = dict(self.settings.get("models") or {})
-        if self.model.get().strip():
-            models[name] = self.model.get().strip()
-        else:
-            models.pop(name, None)
-        self.settings.update(enabled=self.enabled.get(), api_key=key, provider=name, models=models)
+        if self.enabled.get() and self.active_provider == "openai_compatible" and (
+                not self.model.get().strip() or not self.base_url.get().strip()):
+            messagebox.showwarning("AI settings", "Enter a model and HTTPS base URL for this provider.", parent=self)
+            return
+        self._remember_fields()
+        self.settings.update(enabled=self.enabled.get(), api_key=key, provider=self.active_provider)
         self.ai.save_settings(self.settings)
         self.destroy()
 
