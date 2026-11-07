@@ -18,10 +18,10 @@ def _clean(v) -> str:
 def _qty(raw: str):
     """Return (quantity, unit, note) from cells like '9', "+/- 160'" or 'AS REQ.'."""
     s = _clean(raw)
-    m = re.search(r"(\d+(?:\.\d+)?)\s*('|FT)?", s, re.I)
+    m = re.search(r"(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)\s*('|FT)?", s, re.I)
     if not m:
         return 1, "ea", "Quantity not stated (as required / by field)"
-    n = float(m.group(1))
+    n = float(m.group(1).replace(",", ""))
     n = int(n) if n == int(n) else n
     if m.group(2):
         return n, "ft", "Approximate length" if "+/-" in s else ""
