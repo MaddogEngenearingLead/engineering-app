@@ -13,6 +13,7 @@ from pathlib import Path
 
 from app.file_detector import FileDetector
 from app.job_manager import JobManager
+from app.services.scope_work import create_scope_draft
 
 logger = logging.getLogger(__name__)
 
@@ -158,6 +159,13 @@ def run_job_scan(jm: JobManager, job_number: str, demo_pages: list[int] | None =
                 {"pid_file": str(pid_path.resolve()), "result": result, "materials": [], "clarifications": []},
                 indent=2, default=str))
             return {"status": "needs_clarification", "message": message}
+
+        if not scope_files:
+            draft = create_scope_draft(jm, job_number, pid_path, result)
+            _store(jm, job_number, {"bom_status": "needs_scope_review",
+                                    "bom_message": "Review the proposed scope before continuing."})
+            return {"status": "needs_scope_review", "message": "Review the proposed scope before continuing.",
+                    "draft": draft}
 
         def _p(value):
             return str(Path(value).resolve()) if value else None

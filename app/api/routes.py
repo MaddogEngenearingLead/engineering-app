@@ -13,6 +13,7 @@ from app.config import settings
 from app.job_manager import JobManager
 from app.file_detector import FileDetector
 from app.services.scope_bom import build_scoped_bom
+from app.services.scope_work import approve_scope_draft, create_scope_draft, load_scope_draft
 
 router = APIRouter(tags=["engineering"])
 
@@ -326,7 +327,8 @@ async def scan_job_pid(
         else:
             effective_scope = ""
 
-    # A scope of work is optional; without one the P&ID's own markup and notes drive the BOM.
+    if (scope_filename or job_manager.get_scope_files(job_number)) and not effective_scope:
+        raise HTTPException(status_code=400, detail="The scope file contains no readable text.")
 
     # Parse highlight mapping
     mapping = None
@@ -362,6 +364,10 @@ async def scan_job_pid(
             "pid_file": pid_path.name,
             "scope_file": scope_filename or "auto-detected",
         })
+        if result["status"] == "completed" and not effective_scope:
+            draft = create_scope_draft(job_manager, job_number, pid_path, result)
+            result.update(status="needs_scope_review", scope_draft=draft["text"],
+                          message="Review and approve the proposed scope before saving it.")
         if result["status"] == "completed":
             result.update({
                 "total_items": len(result["materials"]),
@@ -371,6 +377,24 @@ async def scan_job_pid(
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error generating BOM: {str(e)}")
+
+
+@router.get("/jobs/{job_number}/scope-draft")
+def get_scope_draft(job_number: str) -> dict:
+    try:
+        return load_scope_draft(job_manager, job_number)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+
+@router.post("/jobs/{job_number}/scope-draft/approve")
+def approve_job_scope(job_number: str, scope_of_work: str = Form(...)) -> dict:
+    try:
+        path = approve_scope_draft(job_manager, job_number, scope_of_work)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    return {"status": "approved", "scope_file": path.name,
+            "message": "Scope saved. Scan the job again to generate a BOM using the approved scope."}
 
 
 # ============================================================================

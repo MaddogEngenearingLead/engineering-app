@@ -9,7 +9,7 @@ and the scanned BOM to the selected AI provider.
 
 ## How it works
 
-1. **Create a job** – enter a job number and drop in the P&ID PDF and the scope (Word, PDF or text).
+1. **Create a job** – enter a job number and drop in the P&ID PDF and, if available, the scope (Word, PDF or text).
 2. **Generate the BOM** – the app:
    - detects demo, new-work and legend pages and the markup colour convention
      (green = new, red = demo, blue clouds = future, bold = in scope, grey = existing);
@@ -21,6 +21,10 @@ and the scanned BOM to the selected AI provider.
    - lists highlighted piping runs by size.
    - when a drawing package contains a printed BOM, reads it as the master list
      instead, preserving all rows and flagging scope matches for review.
+   - if no scope file exists, prepares an editable draft from possible drawing
+     notes and identified items. Review and edit it against the P&ID, then approve
+     it before the app saves `scope/reviewed_scope.txt` and reruns the scan.
+     Cancelling leaves the draft pending and does not create a scope file.
 3. **Review / clarify** – open the review window to:
    - see every item with its location and why it is on the BOM;
    - use **Show on drawing** with Previous/Next and zoom to look at each location;
@@ -31,7 +35,9 @@ and the scanned BOM to the selected AI provider.
    - edit, remove or add items and add free-text clarification notes.
 4. **Save and re-export** – the BOM PDF (items, locations, clarifications, remaining
    review notes) is rewritten. CSV and JSON copies are written next to it in `bom_exports/`
-   for internal use.
+   for internal use. The PDF contains an extractive, bulleted scope summary;
+   JSON retains the complete scope and its summary. Verify the summary against
+   the original scope document, particularly exclusions and qualifications.
 
 Nothing is specific to one drawing or scope; the files used during development are
 test data only.
@@ -89,6 +95,7 @@ app/
     pid_labels.py          # label scan, highlight regions, colour convention
     pid_markup.py          # pipe runs and markup notes
     pid_scope.py           # scope item extraction
+    scope_work.py          # scope summaries and reviewed drawing-derived drafts
     bom_select.py          # which items go on the BOM, and why
     review_questions.py    # flags -> questions; applying/undoing answers
     bom_export.py          # PDF / JSON / CSV export
@@ -111,9 +118,14 @@ uvicorn app.main:app --reload     # http://localhost:8000/docs
 
 Main routes (prefix `/api`): `GET /health`, `POST /scan`, `POST /jobs`,
 `POST /jobs/{job}/upload-pid`, `POST /jobs/{job}/upload-scope`, `POST /jobs/{job}/scan`,
-`GET /materials`. A `Dockerfile` is provided (`docker build -t engineering-app . &&
-docker run --rm -p 8000:8000 engineering-app`). The API has no interactive review or
-question flow; that lives in the desktop app.
+`GET /materials`. When a job scan returns `needs_scope_review`, retrieve the draft
+with `GET /jobs/{job}/scope-draft`, review and edit it, then submit it as form
+field `scope_of_work` to `POST /jobs/{job}/scope-draft/approve`. Scan again to
+generate a BOM using the approved file. The draft is evidence for review, not
+proof that work is authorized; scanned drawings without readable text may
+require the user to write the scope. The one-off `/scan` has no job scope file.
+Other interactive BOM review and questions live in the desktop app. A `Dockerfile`
+is provided (`docker build -t engineering-app . && docker run --rm -p 8000:8000 engineering-app`).
 
 ## Known limitations
 

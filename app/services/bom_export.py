@@ -9,6 +9,9 @@ from reportlab.lib.units import inch
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER, TA_LEFT
+from xml.sax.saxutils import escape
+
+from app.services.scope_work import summarize_scope
 
 
 def export_bom_to_pdf(
@@ -121,8 +124,11 @@ def export_bom_to_pdf(
     
     # Scope of Work
     if scope_of_work:
-        elements.append(Paragraph("Scope of Work", heading_style))
-        elements.append(Paragraph(scope_of_work, normal_style))
+        elements.append(Paragraph("Scope of Work - Summary", heading_style))
+        elements.append(Paragraph("Extracted summary; refer to the full scope for all requirements and exclusions.",
+                                  normal_style))
+        for statement in summarize_scope(scope_of_work):
+            elements.append(Paragraph(escape(statement), normal_style, bulletText="\u2022"))
         elements.append(Spacer(1, 0.2*inch))
     
     # Materials Table
@@ -240,6 +246,7 @@ def export_bom_to_json(
         "source_file": source_file,
         "generated_at": datetime.now().isoformat(),
         "scope_of_work": scope_of_work,
+        "scope_summary": summarize_scope(scope_of_work),
         "detected_assets": detected_assets,
         "materials": materials,
         "total_items": len(materials),

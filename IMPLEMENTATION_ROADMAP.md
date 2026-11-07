@@ -2,7 +2,7 @@
 
 **Product:** a desktop app that compares a P&ID to a scope of work and produces a
 scope-accurate BOM, with interactive review. Processing is local by default; optional AI review
-sends drawing and scope data to its provider. **Current release: v0.1.20.**
+sends drawing and scope data to its provider. **Current release: v0.1.21.**
 
 The original plan (FastAPI + Postgres/Mongo/Neo4j/Redis web platform) was replaced by this
 desktop-first direction. Databases, queues, OCR services and user accounts were never built and

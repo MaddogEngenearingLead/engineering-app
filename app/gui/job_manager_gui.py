@@ -23,6 +23,7 @@ from app.job_manager import JobManager
 from app.gui.review_window import ReviewWindow
 from app.gui.scrolling import ScrollFrame
 from app.services.job_scan import run_job_scan
+from app.services.scope_work import approve_scope_draft, load_scope_draft
 from app.services.updater import (
     UpdateInfo, apply_update, can_self_update, check_for_update, check_for_update_status, download_update,
 )
@@ -249,6 +250,12 @@ class JobManagerApp(TkinterDnD.Tk):
             tk.Label(row, text="  Pages unclear", fg="#b36b00").pack(side="left")
             tk.Button(row, text="Choose pages", relief="groove",
                       command=lambda n=number: self.choose_pages(n)).pack(side="left", padx=6)
+        elif status == "needs_scope_review":
+            tk.Label(row, text="  Scope review needed", fg="#b36b00").pack(side="left")
+            tk.Button(row, text="Review scope", relief="groove",
+                      command=lambda n=number: self.review_scope(n)).pack(side="left", padx=6)
+        elif status == "scope_approved":
+            tk.Label(row, text="  Scope approved; regenerate BOM", fg="#b36b00").pack(side="left")
         elif status == "error":
             tk.Label(row, text="  BOM failed", fg="red").pack(side="left")
 
@@ -270,6 +277,37 @@ class JobManagerApp(TkinterDnD.Tk):
 
     def open_review(self, job_number: str):
         ReviewWindow(self, self.jobs, job_number, on_saved=self.show_dashboard)
+
+    def review_scope(self, job_number: str):
+        try:
+            draft = load_scope_draft(self.jobs, job_number)
+        except (ValueError, OSError) as exc:
+            messagebox.showerror("Scope review", str(exc), parent=self)
+            return
+        dialog = tk.Toplevel(self)
+        dialog.title(f"Review proposed scope - Job #{job_number}")
+        dialog.geometry("800x600")
+        tk.Label(dialog, text="Edit and approve the scope before it is saved. Drawing notes and listed "
+                 "items are evidence, not proof of authorized work; verify against the P&ID.",
+                 wraplength=760, justify="left").pack(fill="x", padx=12, pady=10)
+        text = tk.Text(dialog, wrap="word")
+        text.pack(fill="both", expand=True, padx=12, pady=5)
+        text.insert("1.0", draft["text"])
+        buttons = tk.Frame(dialog)
+        buttons.pack(fill="x", padx=12, pady=10)
+
+        def approve():
+            try:
+                approve_scope_draft(self.jobs, job_number, text.get("1.0", "end"))
+            except (ValueError, OSError) as exc:
+                messagebox.showerror("Scope review", str(exc), parent=dialog)
+                return
+            dialog.destroy()
+            self.start_scan(job_number, draft.get("demo_pages") or None,
+                            draft.get("new_work_pages") or None)
+
+        tk.Button(buttons, text="Approve and generate scope", command=approve).pack(side="right")
+        tk.Button(buttons, text="Cancel", command=dialog.destroy).pack(side="right", padx=8)
 
     def choose_pages(self, job_number: str):
         demo = simpledialog.askstring(
@@ -305,6 +343,9 @@ class JobManagerApp(TkinterDnD.Tk):
             if (outcome.get("ai_note") or "").startswith("AI review was skipped"):
                 messagebox.showinfo("AI review", outcome["ai_note"] + "\n\nThe normal BOM was still generated.")
             self.open_review(job_number)
+            return
+        if status == "needs_scope_review":
+            self.review_scope(job_number)
             return
         title = "BOM needs review" if status == "needs_clarification" else "BOM failed"
         messagebox.showwarning(title, f"Job {job_number}: {outcome.get('message')}")
