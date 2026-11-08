@@ -30,6 +30,24 @@ def test_prepares_local_fallback_in_background(monkeypatch):
     assert ready.wait(2)
 
 
+def test_owned_server_is_waited_for_after_termination(monkeypatch):
+    seen = []
+
+    class Process:
+        def poll(self):
+            return None
+
+        def terminate(self):
+            seen.append("terminate")
+
+        def wait(self, timeout=None):
+            seen.append(("wait", timeout))
+
+    monkeypatch.setattr(ollama_runtime, "_PROCESS", Process())
+    ollama_runtime.stop_owned_server()
+    assert seen == ["terminate", ("wait", 10)]
+
+
 def test_ollama_chat_sends_images_and_json_mode(monkeypatch):
     seen = {}
     monkeypatch.setattr(ollama_runtime, "ensure_model", lambda: None)

@@ -95,6 +95,11 @@ folder's contents into `Jobs` if you want them on the drive.
 Updates: the app checks for a new version at launch and can update itself
 (**Check for updates**). Windows releases are folders distributed as ZIP files so the bundled Ollama runtime is not
 re-extracted on every launch. The app can overlay updates in place while preserving user files.
+Windows updates download a roughly 1.7 GB archive and then extract it; allow several
+GB of free space and keep the app open during both stages. If an update stalls, close
+the app, extract the latest Windows ZIP to a writable folder and run its `JobManager.exe`.
+If you use a portable `Jobs` folder beside the app, copy it into the new app folder first;
+otherwise jobs remain in `%LOCALAPPDATA%\EngineeringApp\uploads`.
 Windows installations from v0.1.27 and earlier must manually download and extract this ZIP
 for the first update; their updater looks for the former single-file executable.
 Releases are built automatically by GitHub Actions

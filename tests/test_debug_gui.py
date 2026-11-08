@@ -39,3 +39,31 @@ def test_open_debug_reports_uses_jobs_directory(monkeypatch, tmp_path):
 
     assert opened == [str((tmp_path / "diagnostics").resolve())]
     assert Path(opened[0]).is_dir()
+
+
+def test_update_failure_message_survives_deferred_callback(monkeypatch):
+    callbacks = []
+    failures = []
+
+    class Thread:
+        def __init__(self, target, daemon):
+            self.target = target
+
+        def start(self):
+            self.target()
+
+    def fail(*args, **kwargs):
+        raise RuntimeError("network disconnected")
+
+    app = SimpleNamespace(updating=False, update_info=object(), running=set(),
+                          _render_update_banner=lambda: None,
+                          _update_failed=failures.append,
+                          after=lambda delay, callback: callbacks.append(callback),
+                          destroy=lambda: None)
+    monkeypatch.setattr(job_manager_gui.threading, "Thread", Thread)
+    monkeypatch.setattr(job_manager_gui, "download_update", fail)
+
+    job_manager_gui.JobManagerApp.start_update(app)
+    for callback in callbacks:
+        callback()
+    assert failures == ["network disconnected"]

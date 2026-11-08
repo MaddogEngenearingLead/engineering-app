@@ -196,6 +196,11 @@ def prepare_local_fallback() -> None:
 def stop_owned_server() -> None:
     if _PROCESS is not None and _PROCESS.poll() is None:
         _PROCESS.terminate()
+        try:
+            _PROCESS.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            _PROCESS.kill()
+            _PROCESS.wait()
 
 
 atexit.register(stop_owned_server)

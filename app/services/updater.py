@@ -14,6 +14,7 @@ import tempfile
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 import httpx
 
@@ -21,6 +22,7 @@ from app import update_config
 from app.version import __version__
 
 API = "https://api.github.com"
+Progress = Callable[[str, int, int | None], None]
 
 
 @dataclass
@@ -95,7 +97,8 @@ def can_self_update() -> bool:
     return bool(getattr(sys, "frozen", False)) and asset_name_for_platform() is not None
 
 
-def download_update(info: UpdateInfo, dest_dir: Path | None = None) -> Path:
+def download_update(info: UpdateInfo, dest_dir: Path | None = None,
+                    progress: Progress | None = None) -> Path:
     dest_dir = dest_dir or Path(tempfile.mkdtemp(prefix="jm_update_"))
     target = dest_dir / info.asset_name
     with httpx.stream(
@@ -103,16 +106,28 @@ def download_update(info: UpdateInfo, dest_dir: Path | None = None) -> Path:
         follow_redirects=True, timeout=120.0,
     ) as resp:
         resp.raise_for_status()
+        length = resp.headers.get("content-length", "")
+        total = int(length) if length.isdigit() else None
+        received = 0
+        if progress:
+            progress("Downloading", received, total)
         with open(target, "wb") as fh:
             for chunk in resp.iter_bytes():
                 fh.write(chunk)
+                received += len(chunk)
+                if progress:
+                    progress("Downloading", received, total)
     return target
 
 
-def _extract_update(downloaded: Path, destination: Path) -> None:
+def _extract_update(downloaded: Path, destination: Path, progress: Progress | None = None) -> None:
     root = destination.resolve()
     links = []
     with zipfile.ZipFile(downloaded) as archive:
+        total = sum(entry.file_size for entry in archive.infolist() if not entry.is_dir())
+        extracted = 0
+        if progress:
+            progress("Extracting", 0, total)
         for entry in archive.infolist():
             path = (destination / entry.filename).resolve()
             if not path.is_relative_to(root):
@@ -123,8 +138,20 @@ def _extract_update(downloaded: Path, destination: Path) -> None:
                 if link.is_absolute() or not (path.parent / link).resolve().is_relative_to(root):
                     raise RuntimeError("The update archive contains an unsafe symlink.")
                 links.append((path, link))
+                extracted += entry.file_size
+                if progress:
+                    progress("Extracting", extracted, total)
                 continue
-            archive.extract(entry, destination)
+            if entry.is_dir():
+                path.mkdir(parents=True, exist_ok=True)
+                continue
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with archive.open(entry) as source, path.open("wb") as target:
+                while chunk := source.read(1024 * 1024):
+                    target.write(chunk)
+                    extracted += len(chunk)
+                    if progress:
+                        progress("Extracting", extracted, total)
             if mode & 0o111:
                 path.chmod(path.stat().st_mode | 0o111)
     for path, link in links:
@@ -132,7 +159,7 @@ def _extract_update(downloaded: Path, destination: Path) -> None:
         path.symlink_to(link)
 
 
-def apply_update(downloaded: Path) -> None:
+def apply_update(downloaded: Path, progress: Progress | None = None) -> None:
     """Start a helper that swaps in the new build after this process exits, then relaunches.
 
     The caller must exit the app right after this returns.
@@ -141,21 +168,37 @@ def apply_update(downloaded: Path) -> None:
     if sys.platform.startswith("win"):
         current = Path(sys.executable)
         install_dir = current.parent
+        try:
+            with tempfile.TemporaryFile(dir=install_dir):
+                pass
+        except OSError as exc:
+            raise RuntimeError(
+                f"The app folder is not writable ({install_dir}). "
+                "Move the app to a writable folder or update it manually."
+            ) from exc
         extract_dir = downloaded.parent / "extracted"
-        _extract_update(downloaded, extract_dir)
+        _extract_update(downloaded, extract_dir, progress)
         if not (extract_dir / "JobManager.exe").is_file():
             raise RuntimeError("The Windows update archive is missing JobManager.exe.")
         script = downloaded.parent / "apply_update.bat"
         script.write_text(
             "@echo off\r\n"
+            "title Engineering App update\r\n"
+            "echo Waiting for Engineering App to close...\r\n"
             ":wait\r\n"
             f'tasklist /FI "PID eq {pid}" /NH | findstr /C:"{pid}" >nul\r\n'
             "if not errorlevel 1 (\r\n"
             "  ping -n 2 127.0.0.1 >nul\r\n"
             "  goto wait\r\n"
             ")\r\n"
+            "echo Installing the update. Please wait...\r\n"
             f'robocopy "{extract_dir}" "{install_dir}" /E /COPY:DAT /R:2 /W:1 >nul\r\n'
-            "if errorlevel 8 exit /b 1\r\n"
+            "if errorlevel 8 (\r\n"
+            "  echo Update failed. Check folder permissions and available disk space.\r\n"
+            f'  echo The downloaded update is in: {downloaded.parent}\r\n'
+            "  pause\r\n"
+            "  exit /b 1\r\n"
+            ")\r\n"
             f'start "" "{current}"\r\n'
             "ping -n 3 127.0.0.1 >nul\r\n"
             f'(goto) 2>nul & rmdir /S /Q "{downloaded.parent}"\r\n'
@@ -164,14 +207,14 @@ def apply_update(downloaded: Path) -> None:
         env["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
         subprocess.Popen(
             ["cmd", "/c", str(script)],
-            creationflags=0x08000000 | 0x00000008,  # no window, detached
+            creationflags=0x00000010,  # new console remains visible if installation fails
             close_fds=True, env=env,
         )
     elif sys.platform == "darwin":
         # .../JobManager.app/Contents/MacOS/JobManager -> .../JobManager.app
         app_bundle = Path(sys.executable).resolve().parents[2]
         extract_dir = downloaded.parent / "extracted"
-        _extract_update(downloaded, extract_dir)
+        _extract_update(downloaded, extract_dir, progress)
         new_app = next(extract_dir.glob("*.app"))
         script = downloaded.parent / "apply_update.sh"
         script.write_text(

@@ -65,6 +65,19 @@ def test_download(monkeypatch, tmp_path):
     assert updater.download_update(info, tmp_path).read_bytes() == b"binary"
 
 
+def test_download_reports_byte_progress(monkeypatch, tmp_path):
+    transport = httpx.MockTransport(lambda req: httpx.Response(200, content=b"binary"))
+    client = httpx.Client(transport=transport)
+    monkeypatch.setattr(
+        updater.httpx, "stream", lambda method, url, **kw: client.stream(method, url, headers=kw.get("headers"))
+    )
+    info = updater.UpdateInfo("2.0.0", "", "JobManager-windows.zip", "https://x/a")
+    seen = []
+    updater.download_update(info, tmp_path, lambda *args: seen.append(args))
+    assert seen[0] == ("Downloading", 0, 6)
+    assert seen[-1] == ("Downloading", 6, 6)
+
+
 def test_windows_update_extracts_and_overlays_app_folder(tmp_path, monkeypatch):
     install = tmp_path / "installed"
     install.mkdir()
@@ -84,6 +97,33 @@ def test_windows_update_extracts_and_overlays_app_folder(tmp_path, monkeypatch):
     assert (downloaded.parent / "extracted" / "JobManager.exe").read_text() == "new"
     script = (downloaded.parent / "apply_update.bat").read_text()
     assert "robocopy" in script and str(install) in script
+    assert "pause" in script and "Update failed" in script
+
+
+def test_windows_update_reports_unwritable_app_folder(tmp_path, monkeypatch):
+    executable = tmp_path / "JobManager.exe"
+    monkeypatch.setattr(updater.sys, "platform", "win32")
+    monkeypatch.setattr(updater.sys, "executable", str(executable))
+
+    def deny(*args, **kwargs):
+        raise PermissionError("access denied")
+
+    monkeypatch.setattr(updater.tempfile, "TemporaryFile", deny)
+    with pytest.raises(RuntimeError, match="app folder is not writable"):
+        updater.apply_update(tmp_path / "update.zip")
+
+
+def test_extract_reports_progress(tmp_path):
+    archive_path = tmp_path / "update.zip"
+    contents = b"x" * (2 * 1024 * 1024 + 10)
+    with zipfile.ZipFile(archive_path, "w") as archive:
+        archive.writestr("app.bin", contents)
+    seen = []
+    updater._extract_update(archive_path, tmp_path / "extracted", lambda *args: seen.append(args))
+    assert seen[0] == ("Extracting", 0, len(contents))
+    assert seen[-1] == ("Extracting", len(contents), len(contents))
+    assert len(seen) >= 4
+    assert (tmp_path / "extracted" / "app.bin").read_bytes() == contents
 
 
 def test_update_preserves_executable_and_symlink(tmp_path):

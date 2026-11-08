@@ -109,6 +109,7 @@ class JobManagerApp(TkinterDnD.Tk):
         self.running: set[str] = set()
         self.update_info: UpdateInfo | None = None
         self.updating = False
+        self.update_status = ""
         self.show_dashboard()
         threading.Thread(target=self._check_updates, daemon=True).start()
         from app.services.ollama_runtime import prepare_local_fallback
@@ -163,7 +164,7 @@ class JobManagerApp(TkinterDnD.Tk):
         text = f"Update available: v{self.update_info.version} (you have v{__version__})"
         tk.Label(banner, text=text, bg="#fff3cd").pack(side="left")
         if self.updating:
-            tk.Label(banner, text="Downloading...", bg="#fff3cd", fg="#b36b00").pack(side="right")
+            tk.Label(banner, text=self.update_status or "Preparing...", bg="#fff3cd", fg="#b36b00").pack(side="right")
         elif can_self_update():
             tk.Button(banner, text="Update now", command=self.start_update,
                       relief="groove").pack(side="right")
@@ -177,19 +178,38 @@ class JobManagerApp(TkinterDnD.Tk):
         ):
             return
         self.updating = True
+        self.update_status = "Preparing..."
         self._render_update_banner()
         info = self.update_info
 
         def work():
+            previous = ""
+
+            def progress(stage: str, completed: int, total: int | None):
+                nonlocal previous
+                if total:
+                    status = f"{stage}: {min(100, completed * 100 // total)}%"
+                else:
+                    status = f"{stage}: {completed // (1024 * 1024)} MB"
+                if status != previous:
+                    previous = status
+                    self.after(0, lambda text=status: self._update_progress(text))
+
             try:
-                path = download_update(info)
-                apply_update(path)
+                path = download_update(info, progress=progress)
+                apply_update(path, progress=progress)
             except Exception as exc:
-                self.after(0, lambda: self._update_failed(str(exc)))
+                message = str(exc) or type(exc).__name__
+                self.after(0, lambda message=message: self._update_failed(message))
                 return
             self.after(0, self.destroy)
 
         threading.Thread(target=work, daemon=True).start()
+
+    def _update_progress(self, status: str):
+        if self.updating:
+            self.update_status = status
+            self._render_update_banner()
 
     def _update_failed(self, message: str):
         self.updating = False
