@@ -147,6 +147,30 @@ class JobManager:
                     jobs.append(data)
         return jobs
 
+    def delete_job(self, job_number: str) -> None:
+        """Permanently remove only this job's directory and dashboard record."""
+        job_dir = self.base_dir / self._sanitize_job_number(job_number)
+        job_file = self.job_file_path(job_number)
+        if job_dir.is_symlink() or job_file.is_symlink():
+            raise ValueError("Cannot delete a job through a symbolic link.")
+        if not job_dir.is_dir():
+            raise FileNotFoundError(f"Job {job_number} was not found.")
+        metadata_path = job_dir / "job_metadata.json"
+        if metadata_path.is_symlink() or not metadata_path.is_file():
+            raise ValueError("Job metadata is missing or is a symbolic link.")
+        with metadata_path.open(encoding="utf-8") as f:
+            metadata = json.load(f)
+        if metadata.get("job_number") != job_number:
+            raise ValueError("Job number does not match the stored job; deletion was cancelled.")
+        if job_file.exists():
+            with job_file.open(encoding="utf-8") as f:
+                record = json.load(f)
+            if record.get("job_number") != job_number:
+                raise ValueError("Job record belongs to a different job; deletion was cancelled.")
+        shutil.rmtree(job_dir)
+        job_file.unlink(missing_ok=True)
+        logger.info("Deleted job %s", job_number)
+
     def get_pid_files(self, job_number: str) -> list[Path]:
         _, pid_dir, _ = self.get_job_dirs(job_number)
         if not pid_dir or not pid_dir.exists():

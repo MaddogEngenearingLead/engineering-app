@@ -82,6 +82,59 @@ def test_question_viewer_note_tracks_location_and_zoom(monkeypatch):
         root.destroy()
 
 
+@pytest.mark.skipif(not os.environ.get("DISPLAY"), reason="Tk requires a display")
+def test_note_can_be_dragged_and_keeps_position_while_view_changes(monkeypatch):
+    root = tk.Tk()
+    root.withdraw()
+    monkeypatch.setattr(LocationViewer, "_page_image",
+                        lambda self, page: (Image.new("RGB", (1800, 1200), "white"), 600.0, 400.0))
+    q = _questions()[0]
+    try:
+        viewer = LocationViewer(root, "unused.pdf", "Review", q["locations"], question=q)
+        root.update()
+        start = viewer.note_position
+        viewer.note_handle.event_generate("<ButtonPress-1>", x=10, y=8, rootx=100, rooty=100)
+        viewer.note_handle.event_generate("<B1-Motion>", x=20, y=18, rootx=200, rooty=150)
+        viewer.note_handle.event_generate("<ButtonRelease-1>", x=20, y=18, rootx=200, rooty=150)
+        moved = viewer.note_position
+        assert moved != start
+        assert tuple(viewer.canvas.coords("review_note")) == moved
+        assert viewer.canvas.find_withtag("review_note_line")
+        assert viewer.pan_x == 0 and viewer.pan_y == 0
+        viewer.set_zoom(2)
+        assert viewer.note_position == moved
+        viewer.step(1)
+        assert viewer.note_position == moved
+        assert "P-2 - Pump" in viewer.note_text.get("1.0", "end")
+        viewer.toggle_note()
+        viewer.toggle_note()
+        assert viewer.note_position == moved
+        viewer.destroy()
+    finally:
+        root.destroy()
+
+
+@pytest.mark.skipif(not os.environ.get("DISPLAY"), reason="Tk requires a display")
+def test_user_mark_converts_zoomed_canvas_click_to_drawing_coordinates(monkeypatch):
+    root = tk.Tk()
+    root.withdraw()
+    monkeypatch.setattr(LocationViewer, "_page_image",
+                        lambda self, page: (Image.new("RGB", (1800, 1200), "white"), 600.0, 400.0))
+    marks = []
+    try:
+        viewer = LocationViewer(root, "unused.pdf", "Mark", [], page=4, on_mark=marks.append)
+        viewer.set_zoom(2)
+        left, top, width, height = viewer._view_bounds
+        viewer._enable_mark()
+        viewer._start_drag(type("Event", (), {"x": 450, "y": viewer._view_height // 2})())
+        assert marks[0]["page"] == 4 and marks[0]["location_source"] == "user"
+        assert marks[0]["x"] == pytest.approx(left + width / 2, abs=0.1)
+        assert marks[0]["y"] == pytest.approx(top + height / 2, abs=1)
+        assert not viewer.winfo_exists()
+    finally:
+        root.destroy()
+
+
 def test_unknown_split_tag_coordinates(tmp_path):
     import pdfplumber
     from app.services.pid_labels import scan_page_labels

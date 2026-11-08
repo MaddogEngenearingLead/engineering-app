@@ -3,12 +3,12 @@ from __future__ import annotations
 
 import math
 import re
+from app.services.size_labels import sizes_in
 
 _BOILERPLATE = re.compile(
     r"^(future work|draft\b|.*\bdrawing\b|\d+(\.\d+)?( psig)?$)", re.I)
 _ACTION = re.compile(r"\b(replace|reinstall|repair|install|provide|add|relocate|new|remove|demo\w*|"
                      r"re-?use|extend)\b", re.I)
-_PIPE_SIZE = re.compile(r'^(\d+(?:-\d/\d)?|\d/\d)"$')
 _PIPE_MATERIAL = {"CS", "SS", "CSO", "PVC", "CU", "AL"}
 _NOISE = {"PSIG", "NC", "NO", "ON", "CN", "OFF", "CS", "SS", "CSO", "B", "FOR", "OPERATION", "HG", "TEST",
           "XX", "SC", "OSC", "TANK", "LPD", "MAV", "S", "N2", "NPT"}
@@ -137,8 +137,8 @@ def closed_regions(segs: list[tuple]) -> list[dict]:
 def _pipe_labels(words) -> list[dict]:
     labels = []
     for i, w in enumerate(words):
-        m = _PIPE_SIZE.match(w["text"].replace("\u201d", '"'))
-        if not m:
+        sizes = sizes_in(w["text"])
+        if len(sizes) != 1 or sizes[0] != w["text"].replace("\u201d", '"').replace("″", '"'):
             continue
         mat = ""
         for n in words[i + 1:i + 3]:
@@ -146,7 +146,7 @@ def _pipe_labels(words) -> list[dict]:
                 mat = n["text"].upper()
                 break
         if mat:
-            labels.append({"spec": f'{m.group(1)}" {mat}', "x": (w["x0"] + w["x1"]) / 2,
+            labels.append({"spec": f'{sizes[0]} {mat}', "x": (w["x0"] + w["x1"]) / 2,
                            "y": (w["top"] + w["bottom"]) / 2})
     return labels
 
@@ -202,9 +202,8 @@ def markup_items(page, new_colours: set, symbol_legend: dict | None = None) -> d
             dist = min(_seg_dist((lab["x"], lab["y"]), s) for s in run)
             if dist < best_d:
                 best, best_d = lab["spec"], dist
-        xs = [v for s in run for v in (s[0], s[2])]
-        ys = [v for s in run for v in (s[1], s[3])]
-        cx, cy = (min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2
+        longest = max(run, key=lambda s: math.dist(s[:2], s[2:]))
+        cx, cy = (longest[0] + longest[2]) / 2, (longest[1] + longest[3]) / 2
         pipes.append({"spec": best or "unidentified", "segments": len(run),
                       "length_pts": round(sum(math.dist(s[:2], s[2:]) for s in run), 1),
                       "x": round(cx, 1), "y": round(cy, 1), "grid": locate(cx, cy)})

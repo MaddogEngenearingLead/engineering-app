@@ -152,7 +152,60 @@ def test_scope_items_from_install_lines():
             "Install new 4\u201d 150# pneumatic operated valve on inlet piping\n")
     items = {i["description"]: i["quantity"] for i in scope_items(text)}
     assert items['3/4" Plug'] == 2
-    assert items['4" 150# Pneumatic Operated Valve w/ Operator'] == 1
+    assert items['4" 150# Pneumatic Operated Valve w/ Operator'] is None
+
+
+def test_scope_materials_keep_separate_work_areas_and_unknown_quantities():
+    from app.services.pid_scope import scope_items
+    text = ('(DRG. A-1) Installation: Area A\n'
+            'Install (2) 4" check valves and gaskets.\n'
+            '(DRG. B-2) Installation: Area B\n'
+            'Install 4" check valve and install 6" pipe.\n')
+    items = scope_items(text)
+    valves = [item for item in items if item["description"] == '4" Check Valve']
+    assert len(valves) == 2
+    assert {(item["drg"], item["quantity"]) for item in valves} == {("A-1", 2), ("B-2", None)}
+    gasket = next(item for item in items if item["description"] == "Gasket")
+    assert gasket["quantity"] is None
+    pipe = next(item for item in items if item["description"] == '6" Pipe')
+    assert pipe["quantity"] is None and pipe["drg"] == "B-2"
+    referenced = scope_items('Install new 4" check valve connected to existing pipe.')
+    assert [item["description"] for item in referenced] == ['4" Check Valve']
+    referenced = scope_items('Install new 4" check valve connected to existing 6" pipe.')
+    assert [item["description"] for item in referenced] == ['4" Check Valve']
+    assert not scope_items('Do not install new 4" check valve.')
+    replaced = scope_items('Replace existing 4" check valve with new 6" fire valve.')
+    assert [item["description"] for item in replaced] == ['6" Fire Valve']
+    assert scope_items('Install 4" check valve.')[0]["description"] == '4" Check Valve'
+
+
+def test_existing_and_proposed_tags_link_to_reviewable_evidence(pid, tmp_path):
+    from app.services.review_questions import build_questions
+    result = scan(pid, tmp_path, "Replace tank TK-1 and install a new 4\" flange.")
+    flag = next(f for f in result["flags"] if f["type"] == "change_comparison" and f["tag"] == "TK-1")
+    assert {loc["page"] for loc in flag["locations"]} == {2, 3}
+    assert "does not establish a change" in flag["message"]
+    q = next(q for q in build_questions(result["flags"], result["materials"])
+             if q["flag_type"] == "change_comparison")
+    assert {loc["page"] for loc in q["locations"]} == {2, 3}
+    scope_row = next(m for m in result["materials"] if m["origin"] == "scope")
+    assert scope_row["quantity"] is None
+    assert any(f["type"] == "scope_material_review" for f in result["flags"])
+
+
+def test_coloured_lines_are_reviewed_not_automatically_classified_as_pipe(pid, tmp_path, monkeypatch):
+    from app.services import bom_select
+    monkeypatch.setattr(bom_select, "markup_items", lambda page, colours: {
+        "pipes": [{"spec": '4" CS', "segments": 1, "length_pts": 20,
+                   "x": 50, "y": 70, "grid": ""}], "notes": []})
+    result = scan(pid, tmp_path, 'Install new 1/4" check valve and 6"x4" fire valve.')
+    assert result["status"] == "completed"
+    assert not any(m["type"] == "piping" for m in result["materials"])
+    flag = next(f for f in result["flags"] if f["type"] == "unclassified_markup")
+    assert flag["locations"][0]["page"] == 3 and flag["locations"][0]["x"] == 50
+    assert "valve" in flag["message"] and "4\" CS" in flag["message"]
+    descriptions = {m["description"] for m in result["materials"]}
+    assert '1/4" Check Valve' in descriptions and '6"x4" Fire Valve' in descriptions
 
 
 def test_every_item_has_location_and_review_roundtrip(pid, tmp_path):
@@ -246,6 +299,61 @@ def test_rescan_keeps_answers(pid, tmp_path):
     again = load_review(jm, "T-7")
     assert q["id"] in again["answers"]
     assert len(again["materials"]) == len(mats)
+
+
+def test_user_marked_component_location_survives_rescan_of_same_drawing(pid, tmp_path):
+    from app.job_manager import JobManager
+    from app.services.job_scan import load_review, run_job_scan, save_review
+
+    scope = tmp_path / "scope.txt"
+    scope.write_text("Install PCV-101 and the VFD-1 drive.")
+    jm = JobManager(str(tmp_path / "uploads"))
+    jm.add_job_files("T-11", pid, str(scope))
+    assert run_job_scan(jm, "T-11")["status"] == "completed"
+    review = load_review(jm, "T-11")
+    material = review["materials"][0]
+    uid = material["uid"]
+    mark = {"page": 3, "x": 44.0, "y": 55.0, "grid": "", "location_source": "user"}
+    material.update(locations=[mark], page=3, pages="3", location="p3 (44,55) - user marked")
+    save_review(jm, "T-11", review["materials"], [])
+    assert run_job_scan(jm, "T-11")["status"] == "completed"
+    row = next(m for m in load_review(jm, "T-11")["materials"] if m["uid"] == uid)
+    assert row["locations"] == [mark]
+    assert "marked by user" in row["basis"]
+    paths = jm._load_json(jm.job_file_path("T-11"))
+    import json
+    exported = json.loads(open(paths["bom_json"], encoding="utf-8").read())
+    assert next(m for m in exported["materials"] if m["uid"] == uid)["locations"] == [mark]
+    assert next(m for m in load_review(jm, "T-11")["result"]["materials"] if m["uid"] == uid)["locations"] == [mark]
+    import csv
+    with open(paths["bom_csv"], encoding="utf-8", newline="") as stream:
+        assert any(row["location"] == "p3 (44,55) - user marked" for row in csv.DictReader(stream))
+
+
+@pytest.mark.parametrize("change", ["drawing", "identity"])
+def test_user_marked_location_is_not_replayed_after_change(pid, tmp_path, change):
+    from app.job_manager import JobManager
+    from app.services.job_scan import load_review, run_job_scan, save_review
+
+    scope = tmp_path / "scope.txt"
+    scope.write_text("Install PCV-101 and the VFD-1 drive.")
+    jm = JobManager(str(tmp_path / "uploads"))
+    jm.add_job_files("T-12", pid, str(scope))
+    assert run_job_scan(jm, "T-12")["status"] == "completed"
+    review = load_review(jm, "T-12")
+    material = review["materials"][0]
+    tag = material["tag_id"]
+    material.update(locations=[{"page": 3, "x": 44.0, "y": 55.0, "location_source": "user"}],
+                    page=3, pages="3", location="user marked")
+    if change == "identity":
+        material["description"] = "Different material"
+    save_review(jm, "T-12", review["materials"], [])
+    if change == "drawing":
+        with open(review["pid_file"], "ab") as stream:
+            stream.write(b"\n% Updated drawing\n")
+    assert run_job_scan(jm, "T-12")["status"] == "completed"
+    row = next(m for m in load_review(jm, "T-12")["materials"] if m["tag_id"] == tag)
+    assert not any(loc.get("location_source") == "user" for loc in row.get("locations", []))
 
 
 def test_new_work_not_in_scope_is_left_off_and_asked(pid, tmp_path):

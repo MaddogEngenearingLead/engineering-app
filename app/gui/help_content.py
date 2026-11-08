@@ -40,8 +40,18 @@ HELP_SECTIONS = {
         "3. Open the BOM review. Resolve questions and use Show on drawing to see "
         "the referenced page or highlighted location. Page-only issues open the "
         "whole page when precise coordinates are unavailable.\n\n"
+        "Drag the review note by its heading to move it, or use Show / hide note. "
+        "Drag the drawing itself to pan.\n\n"
+        "Use Mark item location to select a drawing page and click the component. "
+        "Save and re-export the BOM to retain the user-marked location. A printed BOM "
+        "row or nearby scope reference is not automatically a component location.\n\n"
         "Example: a question about a flange may show its BOM row and matching scope "
         "wording. A terminology match alone does not confirm the item is in scope.\n\n"
+        "Matching demo and new-work tag labels are comparison prompts, not proof "
+        "of a replacement or exact component location. Printed BOM scans use the "
+        "table as a master list and do not automatically compare those tags. "
+        "Check each work area and verify connections, ancillary materials and "
+        "quantities against the full drawings and specifications.\n\n"
         "Review quantities, descriptions, scope and all warnings before procurement."
     ),
     "AI setup": (

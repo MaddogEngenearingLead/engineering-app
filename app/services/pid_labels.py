@@ -167,6 +167,7 @@ def scan_page_labels(page, *, allowed_prefixes: set, label_codes: set, decode_ok
             continue
         text = w["text"].strip(".,;:()")
         prefix = number = None
+        last_word = w
         m = _DASHED.match(text)
         if m:
             prefix, number = m.group(1), m.group(2)
@@ -175,6 +176,7 @@ def scan_page_labels(page, *, allowed_prefixes: set, label_codes: set, decode_ok
             if (nxt and _NUM.match(nxt["text"]) and abs(nxt["top"] - w["top"]) < 6
                     and 0 <= nxt["x0"] - w["x1"] < 25 and (text in allowed_prefixes or text in label_codes)):
                 prefix, number = text, nxt["text"]
+                last_word = nxt
                 skip_next = True
             elif (nxt and len(nxt["text"]) >= 3 and _NUM.match(nxt["text"]) and abs(nxt["top"] - w["top"]) < 6
                   and 0 <= nxt["x0"] - w["x1"] < 25 and text not in allowed_prefixes
@@ -185,6 +187,7 @@ def scan_page_labels(page, *, allowed_prefixes: set, label_codes: set, decode_ok
                          and abs((x["x0"] + x["x1"]) / 2 - (w["x0"] + w["x1"]) / 2) < 14 and len(x["text"]) >= 3]
                 if below:
                     prefix, number = text, below[0]["text"]
+                    last_word = below[0]
                     used.add(id(below[0]))
                 elif text in label_codes:
                     prefix, number = text, ""
@@ -196,7 +199,8 @@ def scan_page_labels(page, *, allowed_prefixes: set, label_codes: set, decode_ok
             continue
         if prefix in DENYLIST_PREFIXES and prefix not in label_codes:
             continue
-        cx, cy = (w["x0"] + w["x1"]) / 2, (w["top"] + w["bottom"]) / 2
+        cx = (min(w["x0"], last_word["x0"]) + max(w["x1"], last_word["x1"])) / 2
+        cy = (min(w["top"], last_word["top"]) + max(w["bottom"], last_word["bottom"])) / 2
         state = colour_state(w.get("non_stroking_color"))
         region = "none"
         if any(_inside(cx, cy, r) for r in green) or any(_seg_dist(cx, cy, s) < 12 for s in segments):

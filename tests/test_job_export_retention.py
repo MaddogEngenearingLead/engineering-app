@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from pypdf import PdfReader
 
 from app.api import routes
 from app.config import settings
@@ -14,6 +15,21 @@ from app.services.job_scan import load_current_clarification, load_completed_rev
 
 
 KEYS = ("bom_pdf", "bom_json", "bom_csv")
+
+
+def test_long_scope_does_not_hide_materials_and_full_scope_is_preserved(tmp_path):
+    materials = [{"item_number": 1, "tag_id": "11", "description": "Flange", "type": "flange",
+                  "quantity": 2, "unit": "ea", "location": "BOM page 4", "confidence": 0.95}]
+    scope = "\n".join(f"Install item {n} according to the drawing." for n in range(1, 101))
+    result = bom_export.export_all("JOB-101", "drawing.pdf", materials, scope, [], [], str(tmp_path))
+    pages = [page.extract_text() for page in PdfReader(result["bom_pdf"]).pages]
+    assert "Equipment & Materials" in pages[0] and "Flange" in pages[0]
+    pdf_text = "\n".join(pages)
+    assert "Showing 12 of 100 extracted statements" in pdf_text
+    assert "Install item 12" in pdf_text and "Install item 13" not in pdf_text
+    data = json.loads(Path(result["bom_json"]).read_text(encoding="utf-8"))
+    assert data["scope_of_work"] == scope
+    assert len(data["scope_summary"]) == 100
 
 
 def test_unicode_csv_is_utf8_when_system_default_is_windows_encoding(tmp_path, monkeypatch):

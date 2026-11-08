@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+from app.services.size_labels import sizes_in
 
 # (pattern, name) - more specific patterns first; matched text is consumed
 _VOCAB = [
@@ -22,6 +23,12 @@ _VOCAB = [
     (r"blind flanges?", "Blind Flange"),
     (r"skillets?", "Skillet (Spectacle Blind)"),
     (r"flanges?", "Flange"),
+    (r"gaskets?", "Gasket"),
+    (r"stud bolts?", "Stud Bolt"),
+    (r"bolting", "Bolting"),
+    (r"bolts?", "Bolt"),
+    (r"nuts?", "Nut"),
+    (r"pipe\b(?!\s+supports?)", "Pipe"),
     (r"camlocks?", "Camlock"),
     (r"nipples?", "Nipple"),
     (r"plugs?", "Plug"),
@@ -39,18 +46,18 @@ _VOCAB = [
 ]
 _INSTALL = re.compile(r"\b(install|fabricate|new|provide|add|replace with|connect)\b", re.I)
 _DEMO_ONLY = re.compile(r"^\s*(demolish|remove|use|once|schedule|coordinate|mark|layout|get count)", re.I)
-_SIZE = re.compile(r"(\d+(?:-\d+/\d+|\s?\d+/\d+)?|\d/\d|[¼½¾])\s*[\"”″]")
 _RATING = re.compile(r"\b(\d{2,4}#)")
 _QTY = re.compile(r"\((\d+)\)")
 
 
 def _clauses(line: str) -> list[str]:
-    return [c for c in re.split(r"(?<=[a-z\)\"”])\.\s+|;\s*|\s+and install\s+", line) if c.strip()]
+    return [c for c in re.split(r"(?<=[a-z\)\"”])\.\s+|;\s*|\s+and\s+(?=install\b)", line, flags=re.I)
+            if c.strip()]
 
 
 def scope_items(scope_text: str) -> list[dict]:
     """Materials named in installation lines of the scope: [{description, quantity, source}]."""
-    items: dict[str, dict] = {}
+    items: dict[tuple[str, str, str, str], dict] = {}
     in_install = False
     section = {"drg": "", "title": ""}
     for raw in (scope_text or "").splitlines():
@@ -67,36 +74,47 @@ def scope_items(scope_text: str) -> list[dict]:
         for clause in _clauses(line):
             if not _INSTALL.search(clause):
                 continue
+            if re.search(r"\b(?:do not|don't|shall not|not)\s+(?:install|provide|add|replace|connect)\b",
+                         clause, re.I):
+                continue
             if _DEMO_ONLY.match(clause) and not re.search(r"\b(install|replace with|new)\b", clause, re.I):
                 continue
-            if not in_install and not re.search(r"\binstall\w*\b.*\bnew\b|\bnew\b.*", clause, re.I):
+            if not in_install and not re.search(r"\b(?:install|fabricate|provide|add|replace with|new)\b",
+                                                clause, re.I):
                 continue
             # only text after the first install/new verb counts (skip "demolish X and ...")
             start = _INSTALL.search(clause).start()
             text = clause[start:]
+            matches = []
+            for priority, (pattern, name) in enumerate(_VOCAB):
+                matches.extend((m.start(), priority, m, name) for m in re.finditer(pattern, text, re.I))
             consumed = [False] * len(text)
-            for pattern, name in _VOCAB:
-                for m in re.finditer(pattern, text, re.I):
-                    if any(consumed[m.start():m.end()]):
-                        continue
-                    for i in range(m.start(), m.end()):
-                        consumed[i] = True
-                    before = text[max(0, m.start() - 28):m.start()]
-                    size = _SIZE.findall(before)
-                    rating = _RATING.findall(before)
-                    qty = _QTY.findall(before)
-                    parts = []
-                    if size:
-                        parts.append(f'{size[-1].strip()}"')
-                    if rating:
-                        parts.append(rating[-1])
-                    desc = " ".join(parts + [name])
-                    item = items.setdefault(desc, {"description": desc, "quantity": 0, "sources": [], "explicit": False,
-                                                           "drg": section["drg"], "section": section["title"]})
-                    item["quantity"] = max(item["quantity"], int(qty[-1]) if qty else 1)
-                    item["explicit"] = item["explicit"] or bool(qty)
-                    if clause.strip() not in item["sources"]:
-                        item["sources"].append(clause.strip())
-                    if line not in item.setdefault("lines", []):
-                        item["lines"].append(line)
+            previous_end = 0
+            for _, _, m, name in sorted(matches, key=lambda match: (match[0], match[1])):
+                if any(consumed[m.start():m.end()]):
+                    continue
+                for i in range(m.start(), m.end()):
+                    consumed[i] = True
+                before = text[max(previous_end, m.start() - 40):m.start()]
+                previous_end = m.end()
+                if re.search(r"\b(?:existing|retained|excluded|remove|demolish)\b"
+                             r"(?:(?!\b(?:new|install|add|provide|replace)\b).)*$", before, re.I):
+                    continue
+                size = sizes_in(before)
+                rating = _RATING.findall(before)
+                qty = _QTY.findall(before)
+                parts = []
+                if size:
+                    parts.append(size[-1])
+                if rating:
+                    parts.append(rating[-1])
+                desc = " ".join(parts + [name])
+                key = (desc, section["drg"], section["title"], clause.strip().casefold())
+                item = items.setdefault(key, {"description": desc, "quantity": int(qty[-1]) if qty else None,
+                                              "sources": [], "explicit": bool(qty),
+                                              "drg": section["drg"], "section": section["title"]})
+                if clause.strip() not in item["sources"]:
+                    item["sources"].append(clause.strip())
+                if line not in item.setdefault("lines", []):
+                    item["lines"].append(line)
     return list(items.values())

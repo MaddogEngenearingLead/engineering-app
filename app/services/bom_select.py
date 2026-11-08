@@ -9,6 +9,7 @@ from app.services.pid_extraction import DENYLIST_PREFIXES, VALID_PREFIXES, infer
 from app.services.pid_labels import LABEL_CODES, LABEL_NAMES, scan_page_labels
 from app.services.pid_markup import _pipe_labels, _segments, markup_items
 from app.services.pid_scope import scope_items
+from app.services.size_labels import sizes_in
 
 from app.services.vocabulary import VOCAB
 
@@ -274,6 +275,11 @@ def select_items(pdf, by_page, demo, new, *, legend, abbreviations, symbol_legen
     convention = mix["black"] / total > 0.1 and mix["grey"] / total > 0.1  # bold = scope, grey = existing
 
     demo_keys = {_key(o["prefix"], o["number"]) for p in demo for o in scans[p]["occurrences"]}
+    demo_occurrences: dict = defaultdict(list)
+    for p in demo:
+        for occurrence in scans[p]["occurrences"]:
+            if occurrence["number"]:
+                demo_occurrences[_key(occurrence["prefix"], occurrence["number"])].append(_loc(occurrence, p))
     groups: dict = defaultdict(lambda: {"occ": [], "width": 0, "basis": set(), "prefix": "", "number": ""})
     existing: dict = defaultdict(list)
     future: dict = defaultdict(list)
@@ -350,28 +356,41 @@ def select_items(pdf, by_page, demo, new, *, legend, abbreviations, symbol_legen
         tag_infos.append({"tag": tag, "type": etype, "confidence": conf, "source": source, "prefix": prefix})
 
     flags: list[dict] = []
+    for key, group in groups.items():
+        if not key[1] or key not in demo_occurrences:
+            continue
+        tag = _display(key[0], key[1], group["width"])
+        existing_locs = _dedupe(demo_occurrences[key])
+        proposed_locs = _dedupe(group["occ"])
+        locations = ([{**loc, "review_item": f"{tag} - existing/demo tag label",
+                       "review_reason": "This marks a tag label on a demo page, not a confirmed component."}
+                      for loc in existing_locs] +
+                     [{**loc, "review_item": f"{tag} - proposed/new-work tag label",
+                       "review_reason": "This marks a tag label on a new-work page, not a confirmed component."}
+                      for loc in proposed_locs])
+        flags.append({"type": "change_comparison", "severity": "review", "tag": tag, "locations": locations,
+                      "message": f"{tag} appears on both existing/demo and proposed/new-work pages. "
+                                 "Compare the marked tag labels and the scope to determine what is removed, "
+                                 "retained, replaced or installed. Confirm all required materials, "
+                                 "connections and quantities; the matching tag alone does not establish a change."})
     # piping + notes (highlighted runs)
-    pipe_groups: dict = defaultdict(list)
+    markup_candidates = []
     notes: list[dict] = []
     for p in new:
         found = markup_items(pdf.pages[p - 1], new_colours)
         for r in found["pipes"]:
-            pipe_groups[r["spec"]].append({"page": p, "grid": r["grid"], "x": r["x"], "y": r["y"]})
+            markup_candidates.append({**r, "page": p})
         notes += [{**n, "page": p} for n in found["notes"]]
-    for spec, locs in pipe_groups.items():
-        known = spec != "unidentified"
-        materials.append({
-            "item_number": 0, "tag_id": "-",
-            "description": f"Piping {spec} (highlighted new run)" if known else "Piping, size not determined (highlighted new run)",
-            "type": "piping", "quantity": len(locs), "unit": "run", "confidence": 0.4 if known else 0.2,
-            "description_source": "markup", "scope_match": "", "highlighted": True,
-            "basis": "highlighted pipe run (size from nearest label)",
-            "pages": ",".join(str(x) for x in sorted({l["page"] for l in locs})),
-            "location": location_text(locs), "locations": locs, "origin": "drawing"})
-    if pipe_groups:
-        flags.append({"type": "piping_runs", "severity": "review",
-                      "message": "Highlighted piping is listed as runs with the nearest size label; "
-                                 "lengths and fittings must be taken off the drawing manually."})
+    for candidate in markup_candidates:
+        loc = {k: candidate[k] for k in ("page", "grid", "x", "y")}
+        nearby = candidate["spec"]
+        details = (f"Nearby line label: {nearby}. " if nearby != "unidentified" else
+                   "No nearby line label was identified. ")
+        flags.append({"type": "unclassified_markup", "severity": "review", "locations": [loc],
+                      "page": candidate["page"],
+                      "message": f"Highlighted line at {location_text([loc])}: {details}"
+                                 "The markup may indicate piping, a valve, another component or a boundary; "
+                                 "confirm the item, size and quantity on the drawing before adding it."})
     page_words = {p: pdf.pages[p - 1].extract_words() for p in new}
     for n in notes:
         ctx = _note_context(n, scans[n["page"]]["occurrences"], page_words[n["page"]], symbol_legend,
@@ -392,10 +411,10 @@ def select_items(pdf, by_page, demo, new, *, legend, abbreviations, symbol_legen
     page_text = {p: _page_text(pdf.pages[p - 1], by_page.get(p)) for p in new}
     page_title = {p: (page_text[p].split("INSTALLATION DRAWING", 1) + [""])[1][:80] for p in new}
     for si in scope_items(scope_text or embedded_scope or ""):
-        name = re.sub(r'^[\d\-/"½¼¾# ]+', "", si["description"]).strip()
+        name = re.sub(r'^[\d\-/"½¼¾#xX. ]+', "", si["description"]).strip()
         codes = _codes_for_scope_name(name, code_names)
         on_drawing = sum(drawing_by_code.get(c, 0) for c in codes) if codes else 0
-        if on_drawing:
+        if on_drawing and not sizes_in(si["description"]):
             if si.get("explicit") and on_drawing != si["quantity"]:
                 flags.append({"type": "count_mismatch", "severity": "review", "item": name,
                               "scope_qty": si["quantity"], "drawing_qty": on_drawing, "codes": sorted(codes),
@@ -413,14 +432,23 @@ def select_items(pdf, by_page, demo, new, *, legend, abbreviations, symbol_legen
         clause = (si["sources"][0] if si["sources"] else "")[:140]
         materials.append({
             "item_number": 0, "tag_id": "-", "description": si["description"], "type": "scope_item",
-            "quantity": si["quantity"], "unit": "ea", "confidence": 0.5, "description_source": "scope_of_work",
+            "quantity": si["quantity"], "unit": "ea" if si["quantity"] is not None else "", "confidence": 0.5, "description_source": "scope_of_work",
             "scope_match": "scope", "highlighted": False,
             "basis": f'Scope ({where}): "{clause}". Valve/fitting symbols have no text label, so the '
-                     f'quantity comes from the scope - confirm on the drawing' + (f" (page {page})." if page else "."),
+                     f'quantity is ' + ("stated in the scope" if si["explicit"] else "not specified")
+                     + ' - confirm on the drawing' + (f" (page {page})." if page else "."),
             "pages": str(page or ""),
             "location": (location_text(anchors, prefix="near ") if anchors else
                          (f"p{page} (page only, {si['section'] or 'see drawing'})" if page else "")),
             "locations": anchors, "page": page, "origin": "scope"})
+        flags.append({"type": "scope_material_review", "severity": "review",
+                      "locations": [{**loc, "review_item": si["description"],
+                                     "review_reason": "Nearby reference only; the material itself is not located."}
+                                    for loc in anchors],
+                      "page": page,
+                      "message": f"Scope requires review of {si['description']}: {clause}. "
+                                 "Verify its drawing location, quantity, specification, installation connections "
+                                 "and any other required materials; do not assume an unstated quantity."})
 
     # Drawn as new work but never mentioned in the scope (by tag or item type): not needed
     # for this job unless the user says so.

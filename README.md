@@ -18,7 +18,8 @@ and the scanned BOM to the selected AI provider.
    - keeps an item only if it is new work **and** the scope refers to it (by tag, code or name);
    - adds scope-only rows for work the scope lists but the drawing cannot count
      (valves, flanges, supports), anchored to a page or nearby equipment;
-   - lists highlighted piping runs by size.
+   - flags highlighted line markup for review instead of assuming it is piping
+     or assigning a nearby size to a component.
    - when a drawing package contains a printed BOM, reads it as the master list
      instead, preserving all rows and flagging scope matches for review.
    - if no scope file exists, prepares an editable draft listing identified items,
@@ -28,6 +29,14 @@ and the scanned BOM to the selected AI provider.
      it against the P&ID, then approve
      it before the app saves `scope/reviewed_scope.txt` and reruns the scan.
      Cancelling leaves the draft pending and does not create a scope file.
+   - compares matching tag labels on demo and new-work pages for review. A matching
+     tag does not establish a replacement, and tag coordinates mark labels rather
+     than necessarily the physical components. Scope materials with no stated
+     quantity remain blank; separate work areas are retained for review.
+     Review the required connections and ancillary materials against the complete
+     drawings and specifications: the app cannot determine a complete takeoff.
+     When a printed BOM is extracted, it is treated as a master list, not proof
+     of scope; automatic demo/new tag comparison is not performed on that path.
 3. **Review / clarify** – open the review window to:
    - see every item with its location and why it is on the BOM;
    - use **Show on drawing** with Previous/Next and zoom to look at each location;
@@ -37,7 +46,14 @@ and the scanned BOM to the selected AI provider.
      asked, and why. The note changes with the selected location;
      unrecognised tags can be located this way after rescanning older jobs;
      page-only warnings open the whole page without a guessed circle; zoom and
-     drag to inspect it, and hide the note when it obscures the drawing;
+     drag to inspect it. Drag the review note by its heading to reposition it,
+     or hide it when it obscures the drawing;
+     scope-only item locations may indicate nearby references rather than the
+     component itself; these are explicitly identified in the viewer;
+     printed BOM locations indicate the table row, not a confirmed component
+     location on another sheet. Tagged locations identify text labels. Use
+     **Mark item location** in BOM review to select a drawing page and mark the
+     actual component; save the review to retain the user-marked location;
      for a scan that needs clarification before a BOM can be generated, use
      **View drawing issues** to inspect warnings with known drawing locations;
    - answer the **questions** the scan could not settle (marked `[OPEN]` / `[answered]`).
@@ -48,9 +64,15 @@ and the scanned BOM to the selected AI provider.
 4. **Save and re-export** – the BOM PDF (items, locations, clarifications, remaining
    review notes) is rewritten. Only the most recent successfully generated job
    BOM PDF, CSV and JSON are kept in `bom_exports/`; other files are not removed.
-   The PDF contains an extractive, bulleted scope summary;
-   JSON retains the complete scope and its summary. Verify the summary against
-   the original scope document, particularly exclusions and qualifications.
+   The PDF lists materials before an extractive, bulleted scope summary, limited
+   to 12 statements when the source is long. JSON retains the complete scope and
+   all extracted summary statements. Verify the summary against the original
+   scope document, particularly exclusions and qualifications.
+
+To permanently remove a job, select **Delete job** on its dashboard row and
+confirm. The job folder, including its copied drawings, scope, BOMs and review
+data, is deleted; original files outside the job folder are not. Wait for any
+running scan to finish before deleting.
 
 Nothing is specific to one drawing or scope; the files used during development are
 test data only.

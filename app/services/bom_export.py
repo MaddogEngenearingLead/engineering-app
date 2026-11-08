@@ -202,15 +202,6 @@ def export_bom_to_pdf(
     elements.append(job_table)
     elements.append(Spacer(1, 0.2*inch))
     
-    # Scope of Work
-    if scope_of_work:
-        elements.append(Paragraph("Scope of Work - Summary", heading_style))
-        elements.append(Paragraph("Extracted summary; refer to the full scope for all requirements and exclusions.",
-                                  normal_style))
-        for statement in summarize_scope(scope_of_work):
-            elements.append(Paragraph(escape(statement), normal_style, bulletText="\u2022"))
-        elements.append(Spacer(1, 0.2*inch))
-    
     # Materials Table
     elements.append(Paragraph("Equipment & Materials", heading_style))
     
@@ -252,18 +243,32 @@ def export_bom_to_pdf(
     ]))
     elements.append(materials_table)
     elements.append(Spacer(1, 0.2*inch))
+
+    # Scope of Work
+    if scope_of_work:
+        statements = summarize_scope(scope_of_work)
+        limit = 12
+        elements.append(Paragraph("Scope of Work - Summary", heading_style))
+        notice = "Extracted summary; refer to the full scope for all requirements and exclusions."
+        if len(statements) > limit:
+            notice = (f"Showing {limit} of {len(statements)} extracted statements. "
+                      "Refer to the full scope for all requirements and exclusions.")
+        elements.append(Paragraph(notice, normal_style))
+        for statement in statements[:limit]:
+            elements.append(Paragraph(escape(statement), normal_style, bulletText="\u2022"))
+        elements.append(Spacer(1, 0.2*inch))
     
     # Review Notes / Items Requiring Attention
     if review_notes:
         elements.append(Paragraph("⚠ Items Requiring Review/Clarification", warning_style))
         for i, note in enumerate(review_notes, 1):
-            elements.append(Paragraph(f"• {note}", normal_style))
+            elements.append(Paragraph(f"• {escape(note)}", normal_style))
         elements.append(Spacer(1, 0.2*inch))
     
     if clarifications:
         elements.append(Paragraph("Clarifications", heading_style))
         for note in clarifications:
-            elements.append(Paragraph(f"• {note}", normal_style))
+            elements.append(Paragraph(f"• {escape(note)}", normal_style))
         elements.append(Spacer(1, 0.2*inch))
 
     # Footer

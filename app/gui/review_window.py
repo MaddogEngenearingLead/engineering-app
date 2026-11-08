@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import base64
+import copy
 import io
 import tkinter as tk
 from tkinter import messagebox, simpledialog, ttk
@@ -51,14 +52,19 @@ class LocationViewer(tk.Toplevel):
     RENDER_SCALE = 3.0  # pixels per PDF point; zooming crops this rendering
 
     def __init__(self, parent, pdf_path: str, title: str, locs: list[dict], page: int | None = None,
-                 question: dict | None = None):
+                 question: dict | None = None, on_mark=None):
         super().__init__(parent)
         self.pdf_path, self.locs, self.whole_page = pdf_path, locs, page
         self.question = question
+        self.on_mark = on_mark
+        self._mark_mode = False
         self.index, self.zoom = 0, 1.0
         self.pan_x, self.pan_y = 0.0, 0.0
         self._drag = None
         self.note_visible = True
+        self.note_position = None
+        self._note_drag = None
+        self._note_moved = False
         self._pages: dict[int, object] = {}
         self.title(title)
         bar = tk.Frame(self)
@@ -71,6 +77,9 @@ class LocationViewer(tk.Toplevel):
         self.counter.pack(side="left", padx=10)
         tk.Button(bar, text="Zoom +", command=lambda: self.set_zoom(self.zoom * 1.5)).pack(side="right", padx=2)
         tk.Button(bar, text="Zoom -", command=lambda: self.set_zoom(self.zoom / 1.5)).pack(side="right", padx=2)
+        if on_mark:
+            self.mark_btn = tk.Button(bar, text="Mark item location", command=self._enable_mark)
+            self.mark_btn.pack(side="right", padx=2)
         if question and locs:
             tk.Button(bar, text="Show / hide note", command=self.toggle_note).pack(side="right", padx=2)
         self.canvas = tk.Canvas(self, width=self.VIEW_W, height=self.VIEW_H, highlightthickness=0)
@@ -78,8 +87,12 @@ class LocationViewer(tk.Toplevel):
         self.note = None
         if question and locs:
             self.note = tk.Frame(self.canvas, bg="#fffde7", highlightbackground="#a000a0", highlightthickness=2)
-            tk.Label(self.note, text="Review note", bg="#fffde7", font=("Arial", 10, "bold")
-                     ).pack(anchor="w", padx=5)
+            self.note_handle = tk.Label(self.note, text="Review note  (drag to move)", bg="#fffde7",
+                                        cursor="fleur", anchor="w", font=("Arial", 10, "bold"))
+            self.note_handle.pack(fill="x", padx=5)
+            self.note_handle.bind("<ButtonPress-1>", self._start_note_drag)
+            self.note_handle.bind("<B1-Motion>", self._move_note)
+            self.note_handle.bind("<ButtonRelease-1>", self._end_note_drag)
             frame = tk.Frame(self.note, bg="#fffde7")
             frame.pack(fill="both", expand=True, padx=4, pady=(0, 4))
             scroll = ttk.Scrollbar(frame)
@@ -88,7 +101,7 @@ class LocationViewer(tk.Toplevel):
                                      relief="flat", yscrollcommand=scroll.set)
             self.note_text.pack(side="left", fill="both", expand=True)
             scroll.config(command=self.note_text.yview)
-        tk.Label(self, fg="gray", text="Left/Right arrows = previous/next   + / - or mouse wheel = zoom   Drag = pan"
+        tk.Label(self, fg="gray", text="Left/Right = previous/next   + / - or wheel = zoom   Drag drawing = pan"
                  ).pack(pady=(0, 4))
         self.canvas.bind("<ButtonPress-1>", self._start_drag)
         self.canvas.bind("<B1-Motion>", self._pan)
@@ -124,7 +137,47 @@ class LocationViewer(tk.Toplevel):
         self.show()
 
     def _start_drag(self, event):
+        if self._mark_mode:
+            if not (0 <= event.x < self.VIEW_W and 0 <= event.y < self._view_height):
+                return
+            left, top, width, height = self._view_bounds
+            x = left + event.x / self.VIEW_W * width
+            y = top + event.y / self._view_height * height
+            loc = self.locs[self.index] if self.locs else {"page": self.whole_page}
+            self.on_mark({"page": int(loc["page"]), "x": round(x, 1), "y": round(y, 1), "grid": "",
+                          "location_source": "user"})
+            self.destroy()
+            return
         self._drag = (event.x, event.y)
+
+    def _enable_mark(self):
+        self._mark_mode = True
+        self._drag = None
+        self.mark_btn.config(text="Click the item on the drawing", state="disabled")
+        self.canvas.config(cursor="crosshair")
+
+    def _start_note_drag(self, event):
+        self._note_drag = (event.x_root, event.y_root, *self.note_position)
+
+    def _move_note(self, event):
+        if self._note_drag:
+            root_x, root_y, x, y = self._note_drag
+            self.note_position = (x + event.x_root - root_x, y + event.y_root - root_y)
+            self._note_moved = True
+            self._position_note()
+
+    def _end_note_drag(self, _event):
+        self._note_drag = None
+
+    def _position_note(self):
+        x, y = self.note_position
+        self.note_position = (max(0, min(self.VIEW_W - 310, x)),
+                              max(0, min(max(0, int(self.canvas.cget("height")) - 185), y)))
+        x, y = self.note_position
+        self.canvas.coords("review_note", x, y)
+        if self.canvas.find_withtag("review_note_line"):
+            px, py = self._note_target
+            self.canvas.coords("review_note_line", px, py, x + 155, y + 92.5)
 
     def _pan(self, event):
         if self._drag:
@@ -158,7 +211,9 @@ class LocationViewer(tk.Toplevel):
         left = min(max(0, cx - w / 2), max(0, img.width - w))
         top = min(max(0, cy - h / 2), max(0, img.height - h))
         crop = img.crop((int(left), int(top), int(min(img.width, left + w)), int(min(img.height, top + h))))
+        self._view_bounds = (int(left) / k, int(top) / k, crop.width / k, crop.height / k)
         crop = crop.resize((self.VIEW_W, int(self.VIEW_W * crop.height / max(1, crop.width))))
+        self._view_height = crop.height
         buf = io.BytesIO()
         crop.save(buf, format="PNG")
         self.photo = tk.PhotoImage(data=base64.b64encode(buf.getvalue()))
@@ -185,18 +240,25 @@ class LocationViewer(tk.Toplevel):
             self.note_text.insert("1.0", text)
             self.note_text.config(state="disabled")
             note_w, note_h = 310, 185
-            if precise:
+            if not self._note_moved and precise:
                 x = px + radius + 16
                 if x + note_w > self.VIEW_W:
                     x = px - radius - note_w - 16
                 x = max(0, min(self.VIEW_W - note_w, x))
                 y = max(0, min(max(0, crop.height - note_h), py - note_h / 2))
-                self.canvas.create_line(px + (radius if x > px else -radius), py,
-                                        x if x > px else x + note_w, y + note_h / 2,
-                                        fill="#a000a0", width=2)
-            else:
+            elif not self._note_moved:
                 x, y = self.VIEW_W - note_w, 0
-            self.canvas.create_window(x, y, window=self.note, anchor="nw", width=note_w, height=note_h)
+            else:
+                x, y = self.note_position
+            self.note_position = (x, y)
+            if precise:
+                self._note_target = (px, py)
+                self.canvas.create_line(px, py, x + note_w / 2, y + note_h / 2,
+                                        fill="#a000a0", width=2, tags="review_note_line")
+                self.canvas.tag_lower("review_note_line", "location_highlight")
+            self.canvas.create_window(x, y, window=self.note, anchor="nw", width=note_w, height=note_h,
+                                      tags="review_note")
+            self._position_note()
         n = len(self.locs)
         grid = loc.get("grid", "")
         self.counter.config(text=(f"{self.index + 1} of {n}  -  page {loc['page']} {grid}"
@@ -362,7 +424,8 @@ class ReviewWindow(tk.Toplevel):
 
         bar = tk.Frame(self.body)
         bar.pack(fill="x", padx=8)
-        for text, cmd in (("Show on drawing", self.show_location), ("Edit", self.edit_item),
+        for text, cmd in (("Show on drawing", self.show_location), ("Mark item location", self.mark_location),
+                          ("Edit", self.edit_item),
                           ("Remove", self.remove_item), ("Add item", self.add_item)):
             tk.Button(bar, text=text, command=cmd, relief="groove").pack(side="left", padx=(0, 6))
 
@@ -464,9 +527,16 @@ class ReviewWindow(tk.Toplevel):
         self.wait_window(dlg)  # waits without grabbing, so other windows stay usable
         if not dlg.result:
             return
-        if previous:
-            undo_answer(self.materials, previous)
-        self.answers[q["id"]] = apply_answer(self.materials, q, dlg.result)
+        try:
+            updated = copy.deepcopy(self.materials)
+            if previous:
+                undo_answer(updated, previous)
+            record = apply_answer(updated, q, dlg.result)
+        except ValueError as exc:
+            messagebox.showerror("Question", str(exc), parent=self)
+            return
+        self.materials = updated
+        self.answers[q["id"]] = record
         self._fill()
         self._fill_questions()
 
@@ -481,9 +551,57 @@ class ReviewWindow(tk.Toplevel):
             return
         name = m.get("tag_id") if m.get("tag_id") not in (None, "-") else m.get("description")
         try:
-            LocationViewer(self, self.pid_file, f"{name} - drawing", locs, int(m["page"]) if m.get("page") else None)
+            note = None
+            if locs and all(loc.get("location_source") == "user" for loc in locs):
+                note = {"title": name, "question": "This location was marked by a user.",
+                        "why": "Verify the marked component and its description against the drawing."}
+            elif m.get("origin") == "scope":
+                note = {"title": name, "question": "This circle marks a nearby reference, not the item itself.",
+                        "why": "The scope item has not been located precisely on the drawing. "
+                               "Inspect the nearby reference and surrounding drawing to find the component."}
+            elif m.get("origin") == "drawing_bom":
+                note = {"title": name, "question": "This circle marks the printed BOM row, not the component.",
+                        "why": "The component's location on a P&ID sheet has not been verified. "
+                               "Use the drawing package to locate it before procurement."}
+            elif m.get("type") == "user_identified":
+                note = {"title": name, "question": "This circle marks the reviewed markup.",
+                        "why": "The component's exact location was not automatically verified."}
+            elif m.get("origin") == "drawing" and m.get("tag_id") not in (None, "", "-"):
+                note = {"title": name, "question": "This circle marks the extracted tag label.",
+                        "why": "The associated physical symbol or component may be nearby; verify it on the drawing."}
+            LocationViewer(self, self.pid_file, f"{name} - drawing", locs,
+                           int(m["page"]) if m.get("page") else None, question=note)
         except Exception as exc:
             messagebox.showerror("Location", f"Could not draw the P&ID: {exc}", parent=self)
+
+    def mark_location(self):
+        i = self._selected()
+        if i is None:
+            return
+        try:
+            import pdfplumber
+            with pdfplumber.open(self.pid_file) as pdf:
+                page_count = len(pdf.pages)
+            m = self.materials[i]
+            locs = m.get("locations") or []
+            default = (locs[0].get("page") if locs else None) or m.get("page") or 1
+            page = simpledialog.askinteger("Mark item location",
+                                           f"Enter the drawing page containing this item (1-{page_count}):",
+                                           initialvalue=default, minvalue=1, maxvalue=page_count, parent=self)
+            if page is None:
+                return
+
+            def save_location(loc):
+                m["locations"] = [loc]
+                m["page"] = loc["page"]
+                m["pages"] = str(loc["page"])
+                m["location"] = f"p{loc['page']} ({loc['x']:.0f},{loc['y']:.0f}) - user marked"
+                m["basis"] = (m.get("basis") or "") + "; component location marked by user"
+                self._fill()
+
+            LocationViewer(self, self.pid_file, "Mark item location", [], page=page, on_mark=save_location)
+        except (OSError, ValueError, IndexError) as exc:
+            messagebox.showerror("Location", f"Could not open the drawing: {exc}", parent=self)
 
     def save(self):
         try:

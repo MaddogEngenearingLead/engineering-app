@@ -7,6 +7,7 @@ question is then recorded as resolved on the exported BOM instead of staying ope
 from __future__ import annotations
 
 import hashlib
+import math
 import uuid
 
 NO_CHANGE = "none"
@@ -170,6 +171,18 @@ def _question(i: int, f: dict, materials: list[dict]) -> dict | None:
                 "fields": [{"key": "description", "label": "Item description", "default": f["text"].title()[:60]},
                            {"key": "qty", "label": "Quantity", "default": "1"}]}
 
+    if t == "unclassified_markup":
+        return {**base, "kind": "choice", "locations": _flag_locations(f, materials),
+                "title": f"Identify highlighted markup on page {f.get('page', '?')}",
+                "question": f.get("message", ""),
+                "why": "A colored line and its nearest size label do not identify a pipe or component. "
+                       "The circle marks the markup, not a confirmed component. Inspect the drawing before adding.",
+                "choices": [("add", "Add the identified item to the BOM"),
+                            (NO_CHANGE, "No item to add")],
+                "fields": [{"key": "description", "label": "Item description and size", "default": ""},
+                           {"key": "qty", "label": "Quantity (blank if unknown)", "default": ""},
+                           {"key": "unit", "label": "Unit", "default": ""}]}
+
     if t == "piping_runs":
         rows = [m for m in materials if m.get("type") == "piping"]
         if not rows:
@@ -282,6 +295,21 @@ def apply_answer(materials: list[dict], q: dict, answer: dict) -> dict:
                       location=f"p{loc['page']} {loc.get('grid', '')}".strip(),
                       pages=str(loc["page"]), basis=f"added after review: markup note at that location"))
 
+    elif q["flag_type"] == "unclassified_markup" and choice == "add":
+        description = (fields.get("description") or "").strip()
+        if not description:
+            raise ValueError("Enter the identified item description and size before adding it.")
+        qty_text = (fields.get("qty") or "").strip()
+        quantity = _num(qty_text) if qty_text else None
+        if qty_text and (quantity is None or quantity <= 0):
+            raise ValueError("Enter a positive quantity or leave it blank if unknown.")
+        loc = q["locations"][0]
+        add(_new_item(q, description=description, type="user_identified", quantity=quantity,
+                      unit=(fields.get("unit") or "").strip(), locations=[loc],
+                      location=f"p{loc['page']} {loc.get('grid', '')}".strip(),
+                      pages=str(loc["page"]),
+                      basis="identified by user at highlighted markup; verify exact component location"))
+
     elif q["flag_type"] == "piping_runs":
         by_uid = {m["uid"]: m for m in materials}
         for uid, text in fields.items():
@@ -346,5 +374,7 @@ def _num(value) -> float | int | None:
     try:
         n = float(str(value).strip())
     except (TypeError, ValueError):
+        return None
+    if not math.isfinite(n):
         return None
     return int(n) if n == int(n) else n

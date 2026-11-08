@@ -7,6 +7,7 @@ the dashboard can link the BOM next to the job.
 from __future__ import annotations
 
 import json
+import hashlib
 import logging
 import re
 import uuid
@@ -154,6 +155,7 @@ def save_review(jm: JobManager, job_number: str, materials: list[dict],
     for i, m in enumerate(materials, 1):
         m["item_number"] = i
     result = review["result"]
+    result["materials"] = materials
     job_dir, _, _ = jm.get_job_dirs(job_number)
     questions = build_questions(result.get("flags", []), materials)
     notes = [q["message"] for q in questions
@@ -189,6 +191,26 @@ def _replay_answers(result: dict, materials: list[dict], old: dict) -> dict:
         if prior and prior.get("input") is not None:
             kept[q["id"]] = apply_answer(materials, q, prior["input"])
     return kept
+
+
+def _replay_user_locations(materials: list[dict], previous: list[dict]) -> None:
+    """Keep explicitly marked component locations only for unchanged material identities."""
+    from app.services.review_questions import ensure_uids
+
+    ensure_uids(materials)
+    old = {m["uid"]: m for m in previous if m.get("uid")}
+    for material in materials:
+        prior = old.get(material["uid"])
+        if not prior or any(material.get(field) != prior.get(field)
+                            for field in ("tag_id", "description", "type", "origin")):
+            continue
+        locations = prior.get("locations") or []
+        if not locations or not all(loc.get("location_source") == "user" for loc in locations):
+            continue
+        for field in ("locations", "location", "page", "pages"):
+            if field in prior:
+                material[field] = prior[field]
+        material["basis"] = (material.get("basis") or "") + "; component location marked by user"
 
 
 def _run_ai(result: dict, pid_path: str, scope_text: str, materials: list[dict]) -> str:
@@ -269,9 +291,15 @@ def run_job_scan(jm: JobManager, job_number: str, demo_pages: list[int] | None =
             # Validate the initial scan even when replaying answers requires re-export.
             previous = load_completed_review(jm, job_number) or {}
             materials = result.get("materials") or []
+            with pid_path.open("rb") as source:
+                pid_sha256 = hashlib.file_digest(source, "sha256").hexdigest()
+            if previous.get("pid_sha256") == pid_sha256:
+                _replay_user_locations(materials, previous.get("materials") or [])
             ai_note = _run_ai(result, str(pid_path), scope_text, materials)
             answers = _replay_answers(result, materials, previous.get("answers") or {})
-            if answers or previous.get("clarifications"):
+            if answers or previous.get("clarifications") or any(
+                loc.get("location_source") == "user" for m in materials for loc in m.get("locations") or []
+            ):
                 # First ensure the scan did not silently report an export failure.
                 if not all(result.get(k) for k in ("bom_pdf", "bom_json", "bom_csv")):
                     raise ValueError("Scan did not produce all BOM exports")
@@ -284,7 +312,8 @@ def run_job_scan(jm: JobManager, job_number: str, demo_pages: list[int] | None =
             def commit(paths):
                 result.update(paths)
                 _commit_review(jm, job_number, {
-                    "pid_file": str(pid_path.resolve()), "result": result, "materials": materials,
+                    "pid_file": str(pid_path.resolve()), "pid_sha256": pid_sha256,
+                    "result": result, "materials": materials,
                     "clarifications": previous.get("clarifications", []), "answers": answers,
                 }, {
                     "bom_status": "completed", "bom_message": None, **paths,

@@ -271,6 +271,30 @@ class JobManagerApp(TkinterDnD.Tk):
                       command=lambda n=number: self.open_review(n)).pack(side="right", padx=(0, 6))
         tk.Button(row, text="Regenerate BOM", command=lambda n=number: self.start_scan(n),
                   relief="groove").pack(side="right")
+        tk.Button(row, text="Delete job", command=lambda n=number: self.delete_job(n),
+                  relief="groove").pack(side="right", padx=(0, 6))
+
+    def delete_job(self, job_number: str):
+        safe = self.jobs._sanitize_job_number(job_number)
+        if any(self.jobs._sanitize_job_number(n) == safe for n in self.running):
+            messagebox.showwarning("Delete job", "Wait for the BOM scan to finish before deleting this job.",
+                                   parent=self)
+            return
+        if not messagebox.askyesno(
+            "Delete job",
+            f"Permanently delete job {job_number} and its stored P&ID, scope, BOM exports and review data?\n\n"
+            "This cannot be undone. Original files outside the job folder are not deleted.",
+            parent=self,
+        ):
+            return
+        for window in self.winfo_children():
+            if getattr(window, "job_number_for_delete", None) == job_number:
+                window.destroy()
+        try:
+            self.jobs.delete_job(job_number)
+        except (OSError, ValueError) as exc:
+            messagebox.showerror("Delete job", f"Could not completely delete job {job_number}: {exc}", parent=self)
+        self.show_dashboard()
 
     def _open(self, path: str):
         try:
@@ -283,7 +307,8 @@ class JobManagerApp(TkinterDnD.Tk):
     # ------------------------------------------------------------------
 
     def open_review(self, job_number: str):
-        ReviewWindow(self, self.jobs, job_number, on_saved=self.show_dashboard)
+        window = ReviewWindow(self, self.jobs, job_number, on_saved=self.show_dashboard)
+        window.job_number_for_delete = job_number
 
     def review_scan_issues(self, job_number: str):
         review = load_current_clarification(self.jobs, job_number)
@@ -298,6 +323,7 @@ class JobManagerApp(TkinterDnD.Tk):
                                 parent=self)
             return
         dialog = tk.Toplevel(self)
+        dialog.job_number_for_delete = job_number
         dialog.title(f"Drawing issues - Job #{job_number}")
         tk.Label(dialog, text="Select an issue to inspect its drawing location.").pack(anchor="w", padx=10, pady=5)
         listing = tk.Listbox(dialog, width=100, height=min(10, len(questions)))
@@ -325,6 +351,7 @@ class JobManagerApp(TkinterDnD.Tk):
             messagebox.showerror("Scope review", str(exc), parent=self)
             return
         dialog = tk.Toplevel(self)
+        dialog.job_number_for_delete = job_number
         dialog.title(f"Review proposed scope - Job #{job_number}")
         dialog.geometry("800x600")
         tk.Label(dialog, text="Edit and approve the scope before it is saved. Drawing notes and listed "
