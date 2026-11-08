@@ -2,7 +2,7 @@
 ; Requires dist/JobManager built via: python build_exe.py
 
 #define MyAppName "Engineering App"
-#define MyAppVersion "0.1.29"
+#define MyAppVersion "0.1.30"
 #define MyAppPublisher "MaddogSTD"
 #define MyAppExeName "JobManager.exe"
 
