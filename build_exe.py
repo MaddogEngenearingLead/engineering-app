@@ -46,12 +46,16 @@ if ollama_dir:
     runtime = Path(ollama_dir).expanduser().resolve()
     if not runtime.is_dir():
         raise SystemExit("OLLAMA_BUNDLE_DIR must point to the verified Ollama runtime directory.")
-    if sys.platform != "darwin":
+    if sys.platform not in ("darwin", "win32"):
         args += ["--add-data", f"{runtime}{os.pathsep}ollama-runtime"]
 if sys.platform not in ("darwin", "win32"):
     args.append("--onefile")
 
 PyInstaller.__main__.run(args)
+
+if ollama_dir and sys.platform == "win32":
+    destination = Path("dist/JobManager/_internal/ollama-runtime")
+    shutil.copytree(runtime, destination, symlinks=True)
 
 if ollama_dir and sys.platform == "darwin":
     resources = runtime / "Ollama.app" / "Contents" / "Resources"

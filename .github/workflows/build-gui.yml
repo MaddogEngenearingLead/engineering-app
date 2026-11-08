@@ -98,7 +98,7 @@ jobs:
           import zipfile
           from pathlib import Path
           root = Path("dist/JobManager")
-          with zipfile.ZipFile("dist/JobManager-windows.zip", "w", zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
+          with zipfile.ZipFile("dist/JobManager-windows.zip", "w", zipfile.ZIP_DEFLATED, compresslevel=6) as archive:
               for path in root.rglob("*"):
                   if path.is_file():
                       archive.write(path, path.relative_to(root).as_posix())
