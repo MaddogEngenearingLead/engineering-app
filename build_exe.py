@@ -6,6 +6,8 @@ or macOS (-> dist/JobManager.app) or use the "Build GUI" GitHub Actions workflow
 The BOM scan runs inside the app, so the PDF/BOM libraries are bundled too.
 """
 import os
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -44,8 +46,18 @@ if ollama_dir:
     runtime = Path(ollama_dir).expanduser().resolve()
     if not runtime.is_dir():
         raise SystemExit("OLLAMA_BUNDLE_DIR must point to the verified Ollama runtime directory.")
-    args += ["--add-data", f"{runtime}{os.pathsep}ollama-runtime"]
+    if sys.platform != "darwin":
+        args += ["--add-data", f"{runtime}{os.pathsep}ollama-runtime"]
 if sys.platform not in ("darwin", "win32"):
     args.append("--onefile")
 
 PyInstaller.__main__.run(args)
+
+if ollama_dir and sys.platform == "darwin":
+    resources = runtime / "Ollama.app" / "Contents" / "Resources"
+    if not (resources / "ollama").is_file():
+        raise SystemExit("The Ollama runtime is missing its macOS executable.")
+    app = Path("dist/JobManager.app")
+    destination = app / "Contents" / "Frameworks" / "ollama-runtime"
+    shutil.copytree(resources, destination, symlinks=True)
+    subprocess.run(["codesign", "--force", "--deep", "--sign", "-", str(app)], check=True)

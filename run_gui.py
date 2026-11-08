@@ -24,13 +24,15 @@ def selftest(require_bundled_ocr: bool = False, require_bundled_ollama: bool = F
     if require_bundled_ocr:
         assert getattr(sys, "frozen", False) and bundle.is_dir(), "bundled OCR missing"
     if require_bundled_ollama:
-        executable = ("ollama.exe" if sys.platform.startswith("win")
-                      else "Ollama.app/Contents/Resources/ollama")
+        executable = "ollama.exe" if sys.platform.startswith("win") else "ollama"
         bundled_executable = ollama_runtime / executable
         assert getattr(sys, "frozen", False) and bundled_executable.is_file(), \
             "bundled Ollama runtime missing"
         assert sys.platform.startswith("win") or os.access(bundled_executable, os.X_OK), \
             "bundled Ollama executable is not executable"
+        import subprocess
+
+        subprocess.run([str(bundled_executable), "--version"], check=True, timeout=30)
     if getattr(sys, "frozen", False) and bundle.is_dir():
         from PIL import Image, ImageDraw, ImageFont
         from app.services.drawing_ocr import _searchable_page, _tesseract

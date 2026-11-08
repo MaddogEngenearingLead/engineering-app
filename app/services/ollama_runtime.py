@@ -38,8 +38,7 @@ def _data_dir() -> Path:
 def _bundled_executable() -> Path | None:
     if not getattr(sys, "frozen", False):
         return None
-    relative = ("ollama.exe" if sys.platform.startswith("win")
-                else "Ollama.app/Contents/Resources/ollama")
+    relative = "ollama.exe" if sys.platform.startswith("win") else "ollama"
     path = Path(getattr(sys, "_MEIPASS", "")) / "ollama-runtime" / relative
     return path if path.is_file() and (sys.platform.startswith("win") or os.access(path, os.X_OK)) else None
 
