@@ -6,6 +6,17 @@ import pytest
 from app.services import ai_review
 
 
+def test_provider_help_covers_every_provider():
+    from app.gui.help_content import PROVIDER_HELP, provider_guidance
+
+    assert set(PROVIDER_HELP) == set(ai_review.PROVIDERS)
+    for name, cls in ai_review.PROVIDERS.items():
+        text = provider_guidance(name, cls)
+        assert "API key:" in text and "Model:" in text and "Base URL:" in text
+        if name != "openai_compatible":
+            assert all(url.startswith("https://") for url in PROVIDER_HELP[name][1:])
+
+
 def test_provider_settings_keep_keys_separate(tmp_path, monkeypatch):
     monkeypatch.setenv("AI_SETTINGS_FILE", str(tmp_path / "settings.json"))
     ai_review.save_settings({"enabled": True, "provider": "openai", "api_key": "openai-key",
@@ -106,6 +117,9 @@ def test_settings_named_providers_keep_separate_fields(tmp_path, monkeypatch):
         window.key.insert(0, "gemini-key")
         window.provider.set("Groq")
         window._change_provider()
+        assert "Groq Console" in window.guidance.cget("text")
+        assert "vision-capable model" in window.guidance.cget("text")
+        assert str(window.key_link.cget("state")) == "normal"
         assert window.key.get() == ""
         assert str(window.base_url.cget("state")) == "disabled"
         window.key.insert(0, "groq-key")
@@ -116,5 +130,20 @@ def test_settings_named_providers_keep_separate_fields(tmp_path, monkeypatch):
         assert settings["api_keys"]["gemini"] == "gemini-key"
         assert settings["api_keys"]["groq"] == "groq-key"
         assert settings["models"]["groq"] == "vision-model"
+    finally:
+        root.destroy()
+
+
+@pytest.mark.skipif(not os.environ.get("DISPLAY"), reason="Tk requires a display")
+def test_help_window_has_navigable_examples():
+    from app.gui.job_manager_gui import HelpWindow
+
+    root = tk.Tk()
+    root.withdraw()
+    try:
+        window = HelpWindow(root, "AI setup")
+        assert [window.tabs.tab(tab, "text") for tab in window.tabs.tabs()] == [
+            "Getting started", "AI setup", "Troubleshooting"]
+        assert window.tabs.tab(window.tabs.select(), "text") == "AI setup"
     finally:
         root.destroy()

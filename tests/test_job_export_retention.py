@@ -1,4 +1,5 @@
 import json
+import builtins
 from pathlib import Path
 
 import pytest
@@ -13,6 +14,25 @@ from app.services.job_scan import load_current_clarification, load_completed_rev
 
 
 KEYS = ("bom_pdf", "bom_json", "bom_csv")
+
+
+def test_unicode_csv_is_utf8_when_system_default_is_windows_encoding(tmp_path, monkeypatch):
+    original_open = builtins.open
+
+    def windows_default(file, mode="r", *args, **kwargs):
+        if str(file).endswith(".csv") and "w" in mode and "encoding" not in kwargs:
+            kwargs["encoding"] = "cp1252"
+        return original_open(file, mode, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "open", windows_default)
+    with bom_export.staged_job_exports(str(tmp_path)) as stage:
+        files = bom_export.export_all(
+            "JOB-101", "drawing.pdf",
+            [{"item_number": 1, "tag_id": "V-1", "description": "90° elbow",
+              "type": "fitting", "quantity": 1, "unit": "ea", "confidence": 1.0}],
+            "Install the elbow.", [], [], str(stage))
+        published = bom_export.publish_job_exports("JOB-101", stage, files, str(tmp_path))
+    assert "90° elbow" in Path(published["bom_csv"]).read_text(encoding="utf-8")
 
 
 @pytest.fixture

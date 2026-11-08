@@ -14,6 +14,7 @@ import subprocess
 import sys
 import threading
 import tkinter as tk
+import webbrowser
 from pathlib import Path
 from tkinter import messagebox, simpledialog, ttk
 
@@ -22,6 +23,7 @@ from tkinterdnd2 import DND_FILES, TkinterDnD
 from app.job_manager import JobManager
 from app.gui.review_window import LocationViewer, ReviewWindow
 from app.gui.scrolling import ScrollFrame
+from app.gui.help_content import HELP_SECTIONS, PROVIDER_HELP, provider_guidance
 from app.services.job_scan import load_current_clarification, run_job_scan
 from app.services.review_questions import build_questions
 from app.services.scope_work import approve_scope_draft, load_scope_draft
@@ -199,6 +201,8 @@ class JobManagerApp(TkinterDnD.Tk):
         header = tk.Frame(self.body)
         header.pack(fill="x", pady=(0, 10))
         tk.Label(header, text="Dashboard", font=("Arial", 18, "bold")).pack(side="left")
+        tk.Button(header, text="Help", command=lambda: HelpWindow(self),
+                  relief="groove").pack(side="right", padx=(0, 6))
         tk.Button(header, text="AI settings", command=lambda: AISettingsWindow(self),
                   relief="groove").pack(side="right", padx=(0, 6))
         tk.Button(header, text="Check for updates", command=self.check_updates_manually,
@@ -400,6 +404,7 @@ class AISettingsWindow(tk.Toplevel):
         self.ai = ai_review
         self.settings = ai_review.load_settings()
         self.title("AI settings")
+        self.geometry("680x700")
         self.scroller = ScrollFrame(self, padx=20, pady=20)
         self.scroller.pack(fill="both", expand=True)
         self.body = self.scroller.body
@@ -427,6 +432,14 @@ class AISettingsWindow(tk.Toplevel):
         self.base_url = tk.Entry(self.body, width=48)
         self.base_url.insert(0, (self.settings.get("base_urls") or {}).get(self.active_provider, ""))
         self.base_url.pack(anchor="w")
+        self.guidance = tk.Label(self.body, justify="left", anchor="w", wraplength=600, fg="#333")
+        self.guidance.pack(fill="x", pady=(12, 0))
+        links = tk.Frame(self.body)
+        links.pack(anchor="w")
+        self.key_link = tk.Button(links, text="Open API key page", command=lambda: self._open_help_link(1))
+        self.key_link.pack(side="left", padx=(0, 6))
+        self.models_link = tk.Button(links, text="Open model catalog", command=lambda: self._open_help_link(2))
+        self.models_link.pack(side="left")
         self._set_endpoint_state()
         self.provider.bind("<<ComboboxSelected>>", self._change_provider)
         tk.Label(self.body, justify="left", fg="#555", text=(
@@ -438,6 +451,7 @@ class AISettingsWindow(tk.Toplevel):
         ).pack(anchor="w", pady=(10, 0))
         row = tk.Frame(self.body)
         row.pack(anchor="e", pady=(14, 0))
+        tk.Button(row, text="Help", command=lambda: HelpWindow(self, "AI setup"), width=10).pack(side="left")
         tk.Button(row, text="Cancel", command=self.destroy, width=10).pack(side="right", padx=(6, 0))
         tk.Button(row, text="Save", command=self.save, width=10, bg="#2196F3", fg="white").pack(side="right")
 
@@ -462,6 +476,14 @@ class AISettingsWindow(tk.Toplevel):
 
     def _set_endpoint_state(self):
         self.base_url.configure(state="normal" if self.active_provider == "openai_compatible" else "disabled")
+        self.guidance.configure(text=provider_guidance(self.active_provider, self.ai.PROVIDERS[self.active_provider]))
+        for button, url in zip((self.key_link, self.models_link), PROVIDER_HELP[self.active_provider][1:]):
+            button.configure(state="normal" if url else "disabled")
+
+    def _open_help_link(self, index: int):
+        url = PROVIDER_HELP[self.active_provider][index]
+        if url and not webbrowser.open(url):
+            messagebox.showwarning("Help", f"Could not open your browser. Visit:\n{url}", parent=self)
 
     def save(self):
         key = self.key.get().strip()
@@ -480,6 +502,21 @@ class AISettingsWindow(tk.Toplevel):
         self.settings.update(enabled=self.enabled.get(), api_key=key, provider=self.active_provider)
         self.ai.save_settings(self.settings)
         self.destroy()
+
+
+class HelpWindow(tk.Toplevel):
+    def __init__(self, parent, selected: str = "Getting started"):
+        super().__init__(parent)
+        self.title("Help")
+        self.geometry("720x580")
+        self.tabs = ttk.Notebook(self)
+        self.tabs.pack(fill="both", expand=True, padx=12, pady=12)
+        for title, text in HELP_SECTIONS.items():
+            frame = ScrollFrame(self.tabs, padx=15, pady=15)
+            self.tabs.add(frame, text=title)
+            tk.Label(frame.body, text=text, justify="left", anchor="nw", wraplength=620).pack(fill="both", expand=True)
+            if title == selected:
+                self.tabs.select(frame)
 
 
 class NewJobWindow(tk.Toplevel):

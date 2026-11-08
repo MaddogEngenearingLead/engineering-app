@@ -54,16 +54,40 @@ jobs:
           cfg = pathlib.Path("app/update_config.py")
           cfg.write_text(cfg.read_text().replace('UPDATE_TOKEN = ""', f'UPDATE_TOKEN = "{token}"'))
       - run: pip install -r requirements.txt pyinstaller
+      - uses: mamba-org/setup-micromamba@v2
+        id: ocr-env
+        with:
+          environment-name: ocr
+          create-args: -c conda-forge tesseract=5.5.3
+          init-shell: none
+          micromamba-root-path: ${{ runner.temp }}/micromamba
+      - name: Prepare Tesseract bundle
+        shell: bash
+        env:
+          OCR_PREFIX: ${{ steps.ocr-env.outputs.environment-path }}
+          OCR_CACHE: ${{ runner.temp }}/micromamba/pkgs
+        run: python scripts/prepare_tesseract_bundle.py --prefix "$OCR_PREFIX" --cache "$OCR_CACHE" --output "$RUNNER_TEMP/tesseract-bundle"
       - run: python build_exe.py
+        env:
+          TESSERACT_BUNDLE_DIR: ${{ runner.temp }}/tesseract-bundle
+      - name: Remove build-time OCR environment from its original location
+        shell: python
+        env:
+          OCR_PREFIX: ${{ steps.ocr-env.outputs.environment-path }}
+        run: |
+          import os
+          from pathlib import Path
+          prefix = Path(os.environ["OCR_PREFIX"])
+          prefix.rename(prefix.with_name(prefix.name + "-moved"))
       - name: Selftest packaged app (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $p = Start-Process dist/JobManager.exe -ArgumentList "--selftest" -Wait -PassThru
+          $p = Start-Process dist/JobManager.exe -ArgumentList "--selftest-require-bundled-ocr" -Wait -PassThru
           if ($p.ExitCode -ne 0) { throw "Selftest failed with exit code $($p.ExitCode)" }
       - name: Selftest packaged app (macOS)
         if: runner.os == 'macOS'
-        run: dist/JobManager.app/Contents/MacOS/JobManager --selftest
+        run: dist/JobManager.app/Contents/MacOS/JobManager --selftest-require-bundled-ocr
       - name: Zip macOS app
         if: runner.os == 'macOS'
         run: cd dist && zip -r JobManager-macos.zip JobManager.app

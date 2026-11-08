@@ -2,7 +2,7 @@
 import sys
 
 
-def selftest() -> int:
+def selftest(require_bundled_ocr: bool = False) -> int:
     """Import everything the app needs and run a real PDF scan; used to verify packaged builds."""
     import tempfile
     from pathlib import Path
@@ -19,9 +19,14 @@ def selftest() -> int:
 
     assert Path(certifi.where()).is_file(), "CA bundle missing"
     bundle = Path(getattr(sys, "_MEIPASS", "")) / "tesseract"
+    if require_bundled_ocr:
+        assert getattr(sys, "frozen", False) and bundle.is_dir(), "bundled OCR missing"
     if getattr(sys, "frozen", False) and bundle.is_dir():
         from PIL import Image, ImageDraw, ImageFont
-        from app.services.drawing_ocr import _searchable_page
+        from app.services.drawing_ocr import _searchable_page, _tesseract
+
+        binary, _ = _tesseract()
+        assert binary and Path(binary).is_relative_to(bundle), "bundled OCR executable missing"
 
         image = Image.new("RGB", (900, 180), "white")
         ImageDraw.Draw(image).text((30, 30), "BILL OF MATERIALS", font=ImageFont.load_default(size=48), fill="black")
@@ -51,8 +56,8 @@ def selftest() -> int:
 
 
 if __name__ == "__main__":
-    if "--selftest" in sys.argv:
-        sys.exit(selftest())
+    if "--selftest" in sys.argv or "--selftest-require-bundled-ocr" in sys.argv:
+        sys.exit(selftest(require_bundled_ocr="--selftest-require-bundled-ocr" in sys.argv))
     from app.gui.job_manager_gui import main
 
     main()

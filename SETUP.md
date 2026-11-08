@@ -7,9 +7,10 @@ release and run it. No Python needed. See [`README.md`](README.md) for how to us
 ## Developers
 
 Prerequisites: Python 3.12, git, and on Linux `python3-tk` (plus `xvfb` for headless GUI checks).
-Optional image-only BOM/revision OCR requires Tesseract OCR with English language
-data installed separately and `tesseract` on `PATH`. Standard releases do not bundle
-Tesseract. Missing OCR or unreadable image-only sheets are flagged for review.
+The updated release workflow bundles Tesseract and English language data for
+image-only BOM/revision OCR on Windows and macOS. Previously published releases
+and source installations require a separate Tesseract installation with English
+data on `PATH`. Missing OCR or unreadable image-only sheets are flagged for review.
 
 To build with a supplied, redistributable Tesseract installation, set
 `TESSERACT_BUNDLE_DIR` before running `python build_exe.py`. The directory must
@@ -18,8 +19,9 @@ runtime libraries, `tessdata/eng.traineddata`, and `tessdata/pdf.ttf`. The build
 includes that directory and prefers it over
 `PATH`; packaged `--selftest` exercises bundled OCR. Use an installation built for the target OS and
 architecture, check its redistribution licenses, and test the resulting app on a
-clean target machine: native library dependencies must also be portable. The
-release workflow does not provision this optional bundle automatically.
+clean target machine: native library dependencies must also be portable. The release
+workflow provisions Tesseract from conda-forge, includes package license notices,
+and requires bundled OCR to pass its packaged self-test before publication.
 
 ```bash
 git clone https://github.com/MaddogSTD/engineering-app.git

@@ -31,9 +31,10 @@ args = [
 bundle_dir = os.environ.get("TESSERACT_BUNDLE_DIR")
 if bundle_dir:
     root = Path(bundle_dir).expanduser().resolve()
-    executable = root / ("tesseract.exe" if sys.platform.startswith("win") else "tesseract")
-    if not all(path.is_file() for path in (executable, root / "tessdata" / "eng.traineddata",
-                                           root / "tessdata" / "pdf.ttf")):
+    name = "tesseract.exe" if sys.platform.startswith("win") else "tesseract"
+    if not ((root / name).is_file() or (root / "bin" / name).is_file()) or not all(
+        path.is_file() for path in (root / "tessdata" / "eng.traineddata", root / "tessdata" / "pdf.ttf")
+    ):
         raise SystemExit("TESSERACT_BUNDLE_DIR must contain tesseract, tessdata/eng.traineddata and tessdata/pdf.ttf.")
     args += ["--add-data", f"{root}{os.pathsep}tesseract"]
 # --onefile with --windowed is deprecated on macOS, which builds a .app bundle instead

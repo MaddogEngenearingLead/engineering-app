@@ -26,12 +26,14 @@ def _tesseract() -> tuple[str | None, dict]:
             else:
                 env["LD_LIBRARY_PATH"] = original
         root = Path(getattr(sys, "_MEIPASS", Path(sys.executable).parent)) / "tesseract"
-        binary = root / ("tesseract.exe" if sys.platform.startswith("win") else "tesseract")
-        if binary.is_file():
-            env["TESSDATA_PREFIX"] = str(root / "tessdata")
-            if sys.platform.startswith("linux"):
-                env["LD_LIBRARY_PATH"] = os.pathsep.join(filter(None, (str(root), env.get("LD_LIBRARY_PATH"))))
-            return str(binary), env
+        name = "tesseract.exe" if sys.platform.startswith("win") else "tesseract"
+        for binary in (root / "bin" / name, root / name):
+            if binary.is_file():
+                env["TESSDATA_PREFIX"] = str(root / "tessdata")
+                if sys.platform.startswith("linux"):
+                    env["LD_LIBRARY_PATH"] = os.pathsep.join(
+                        filter(None, (str(root / "lib"), str(root), env.get("LD_LIBRARY_PATH"))))
+                return str(binary), env
     return shutil.which("tesseract"), env
 
 

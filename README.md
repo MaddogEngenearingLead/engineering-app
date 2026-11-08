@@ -76,10 +76,11 @@ installer is described in [`installer/README.md`](installer/README.md).
 ## Run from source (developers)
 
 Requires Python 3.12 and, on Linux, `python3-tk`.
-For image-only BOM sheets and revision areas, install Tesseract OCR with English
-language data and make `tesseract` available on `PATH`, or build with a compatible
-Tesseract bundle (see `SETUP.md`). OCR runs locally and is optional; the app
-reports when it is unavailable. Standard releases do not currently bundle it.
+For image-only BOM sheets and revision areas, OCR runs locally. The updated Windows
+and macOS release workflow bundles Tesseract with English language data; releases
+published before that workflow is deployed require a separate installation. When
+running from source, install Tesseract with English data and make `tesseract`
+available on `PATH`. OCR results still require review.
 
 ```bash
 python -m venv .venv
@@ -179,6 +180,7 @@ left blank instead of assumed to be one.
 
 ## Optional AI review
 
+Open **Help** on the dashboard for setup instructions, examples and troubleshooting.
 Click **AI settings** on the dashboard, enable AI, select Google Gemini, ChatGPT (OpenAI API),
 Anthropic Claude, xAI Grok, Groq, Mistral AI, OpenRouter, Together AI, or an
 OpenAI-compatible provider, and enter that provider's API key and a vision-capable
@@ -186,6 +188,8 @@ model. Grok, Groq, Mistral, OpenRouter and Together require an explicit model ID
 that supports image input and the OpenAI chat-completions image format. For a custom
 compatible provider, also supply its HTTPS
 API base URL (typically ending in `/v1`); the service must support image inputs.
+The settings window explains each field and links to the selected provider's
+API-key page and model catalog.
 ChatGPT uses an OpenAI API key and API billing; a ChatGPT subscription does not
 include API access.
 Available models, costs and image limits depend on the provider. Not every AI

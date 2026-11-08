@@ -334,7 +334,7 @@ def export_bom_to_json(
         "clarifications": clarifications or [],
     }
 
-    file_path.write_text(json.dumps(bom_data, indent=2))
+    file_path.write_text(json.dumps(bom_data, indent=2), encoding="utf-8")
     return str(file_path)
 
 
@@ -364,10 +364,10 @@ def export_bom_to_csv(
     file_path = output_path / filename
 
     if not materials:
-        file_path.write_text("")
+        file_path.write_text("", encoding="utf-8")
         return str(file_path)
 
-    with open(file_path, "w", newline="") as f:
+    with open(file_path, "w", encoding="utf-8", newline="") as f:
         fieldnames = list(dict.fromkeys(k for m in materials for k in m))
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
