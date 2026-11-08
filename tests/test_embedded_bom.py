@@ -13,8 +13,12 @@ from app.services.scope_bom import build_scoped_bom
 
 def test_qty_forms():
     assert _qty("9") == (9, "ea", "")
-    assert _qty("+/- 160'") == (160, "ft", "Approximate length")
-    assert _qty("AS REQ.")[0] is None
+    assert _qty("+/- 160'") == (160, "ft", "")
+    assert _qty("AS REQ.") == (None, "", "")
+    assert _qty("AS REQUIRED") == (None, "", "")
+    assert _qty("BY FIELD") == (None, "", "")
+    assert _qty("FIELD VERIFY") == (None, "", "")
+    assert _qty("")[2] == "Quantity not stated (as required / by field)"
 
 
 def test_type_and_columns():
@@ -33,7 +37,7 @@ def test_bulk_scope_aliases_and_unknown_quantity():
     assert _scope_reference("CARBON STEEL PIPE", "Install new pipe") == "pipe"
     assert _scope_reference("BALL VALVE", "Replace valves") == "valve"
     assert not _scope_reference("PIPE SUPPORT", "Provide bolting")
-    assert _qty("AS REQ.") == (None, "", "Quantity not stated (as required / by field)")
+    assert _qty("AS REQ.") == (None, "", "")
 
 
 def test_custom_scope_alias(monkeypatch):
@@ -201,6 +205,7 @@ def test_native_printed_bom_keeps_unmatched_and_unknown_quantities(tmp_path):
     assert set(rows) == {"11", "12", "13"}
     assert rows["11"]["scope_match"] == "flange" and rows["11"]["quantity"] == 2
     assert rows["12"]["scope_match"] == "bolting" and rows["12"]["quantity"] is None
+    assert rows["12"]["notes"] == ""
     assert rows["13"]["scope_match"] == "" and rows["13"]["quantity"] == 1
     assert "No configured scope term" in rows["13"]["scope_match_reason"]
     assert "scope mentions" in rows["11"]["scope_match_reason"].lower()
@@ -208,6 +213,9 @@ def test_native_printed_bom_keeps_unmatched_and_unknown_quantities(tmp_path):
     assert "Install flanges and bolting" in rows["11"]["scope_match_reason"]
     assert all(row["locations"] and row["locations"][0]["page"] == 1 for row in rows.values())
     assert any(f["type"] == "bom_scope_crosscheck" for f in result["flags"])
+    flag = next(f for f in result["flags"] if f["type"] == "bom_scope_crosscheck")
+    assert "3 of 3 printed BOM rows have descriptions (100% label completeness)" in flag["message"]
+    assert "Scope terminology matched 2 of 3" in flag["message"]
     from app.services.review_questions import build_questions
     q = next(q for q in build_questions(result["flags"], result["materials"])
              if q["flag_type"] == "bom_scope_crosscheck")

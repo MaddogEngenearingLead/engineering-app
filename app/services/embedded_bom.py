@@ -37,13 +37,16 @@ def _clean(v) -> str:
 def _qty(raw: str):
     """Return (quantity, unit, note) from cells like '9', "+/- 160'" or 'AS REQ.'."""
     s = _clean(raw)
+    if re.search(r"\bAS\s+REQ(?:UIRED)?\.?(?=\s|$)|\bBY\s+FIELD\b|\bFIELD\s+(?:VERIFY|MEASURE|DETERMINE)\b"
+                 r"|\bTO\s+BE\s+DETERMINED\s+IN\s+FIELD\b", s, re.I):
+        return None, "", ""
     m = re.search(r"(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)\s*('|FT)?", s, re.I)
     if not m:
         return None, "", "Quantity not stated (as required / by field)"
     n = float(m.group(1).replace(",", ""))
     n = int(n) if n == int(n) else n
     if m.group(2):
-        return n, "ft", "Approximate length" if "+/-" in s else ""
+        return n, "ft", ""
     return n, "ea", ""
 
 
@@ -114,13 +117,18 @@ def _scope_basis(match: str, scope_text: str, target: str = "", excerpt: str = "
 
 
 def scope_crosscheck_flag(rows: list[dict], scope_text: str) -> dict:
+    described = sum(bool(_clean(row.get("description"))) for row in rows)
+    label_coverage = (f"{described} of {len(rows)} printed BOM rows have descriptions "
+                      f"({described / len(rows):.0%} label completeness).") if rows else \
+        "No printed BOM rows were found."
     if scope_text.strip():
         matched = sum(bool(m["scope_match"]) for m in rows)
-        message = (f"Scope terminology matched {matched} of {len(rows)} printed BOM rows. "
+        message = (f"{label_coverage} Scope terminology matched {matched} of {len(rows)} printed BOM rows. "
                    "Matches are material classes, not proof of scope; all unmatched rows "
                    "remain in the master list and must be reviewed.")
     else:
-        message = "No scope was supplied; the printed BOM is a master list and every item requires scope review."
+        message = (f"{label_coverage} No scope was supplied; the printed BOM is a master list "
+                   "and every item requires scope review.")
     return {"type": "bom_scope_crosscheck", "severity": "review", "message": message}
 
 
