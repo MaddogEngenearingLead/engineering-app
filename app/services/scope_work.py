@@ -3,15 +3,12 @@ from __future__ import annotations
 
 import hashlib
 import json
-import logging
 import re
 from pathlib import Path
 
 import pdfplumber
 
 from app.job_manager import JobManager
-
-logger = logging.getLogger(__name__)
 
 
 def summarize_scope(text: str) -> list[str]:
@@ -112,20 +109,6 @@ def _drawing_evidence(pdf_path: Path) -> tuple[str, set[str], list[tuple[int, st
     return evidence, chosen_pages, notes
 
 
-def _drawing_notes(pdf_path: Path, page_numbers: list[int]) -> list[tuple[int, str]]:
-    notes = []
-    with pdfplumber.open(pdf_path) as pdf:
-        pages = page_numbers or list(range(1, len(pdf.pages) + 1))
-        for page_no in pages:
-            if not 1 <= page_no <= len(pdf.pages):
-                continue
-            for raw in (pdf.pages[page_no - 1].extract_text() or "").splitlines():
-                note = re.sub(r"\s+", " ", raw).strip()
-                if 12 <= len(note) <= 400 and _WORK_NOTE.search(note):
-                    notes.append((page_no, note))
-    return notes
-
-
 def _bom_evidence(materials: list[dict]) -> tuple[str, set[str], dict[str, str]]:
     rows = []
     ids = set()
@@ -219,12 +202,8 @@ def create_scope_draft(jm: JobManager, job_number: str, pid_path: Path, result: 
         raise ValueError("A scope file already exists; it will not be replaced.")
     from app.services import ai_review
 
-    ai_enabled = ai_review.is_enabled()
-    if ai_enabled:
-        drawing_evidence, page_sources, notes = _drawing_evidence(pid_path)
-    else:
-        drawing_evidence, page_sources = "", set()
-        notes = _drawing_notes(pid_path, result.get("demo_pages", []) + result.get("new_work_pages", []))
+    ai_review.require_provider()
+    drawing_evidence, page_sources, notes = _drawing_evidence(pid_path)
     review_pages = set(result.get("demo_pages", []) + result.get("new_work_pages", []))
     if review_pages:
         notes = [(page, note) for page, note in notes if page in review_pages]
@@ -263,18 +242,11 @@ def create_scope_draft(jm: JobManager, job_number: str, pid_path: Path, result: 
     if not lines:
         lines.append("- No reliable work instructions were extracted. Define the scope from the P&ID.")
     text = "\n".join(lines)
-    draft_info = {"generation_method": "extractive"}
-    if ai_enabled:
-        try:
-            bom_evidence, bom_sources, bom_labels = _bom_evidence(result.get("materials", []))
-            ai_draft = ai_review.draft_scope_with_ai(drawing_evidence, bom_evidence, review_index=text)
-            text = _format_ai_scope(ai_draft, page_sources | bom_sources, bom_labels)
-            draft_info = {"generation_method": "ai",
-                          "ai_provider": ai_draft["provider"], "ai_model": ai_draft["model"]}
-        except (ai_review.AIError, ValueError) as exc:
-            logger.warning("AI scope drafting failed; using extractive draft: %s", exc)
-            draft_info["generation_warning"] = (
-                f"AI scope drafting could not be completed ({exc}). The extractive evidence draft is shown instead.")
+    bom_evidence, bom_sources, bom_labels = _bom_evidence(result.get("materials", []))
+    ai_draft = ai_review.draft_scope_with_ai(drawing_evidence, bom_evidence, review_index=text)
+    text = _format_ai_scope(ai_draft, page_sources | bom_sources, bom_labels)
+    draft_info = {"generation_method": "ai",
+                  "ai_provider": ai_draft["provider"], "ai_model": ai_draft["model"]}
     draft = {
         "pid_file": str(pid_path.resolve()),
         "pid_sha256": _digest(pid_path),

@@ -83,7 +83,7 @@ def test_ai_fallback_when_tesseract_is_unavailable(tmp_path, monkeypatch):
     c.showPage()
     c.save()
     monkeypatch.setattr(drawing_ocr.shutil, "which", lambda _: None)
-    monkeypatch.setattr(ai_review, "is_enabled", lambda: True)
+    monkeypatch.setattr(ai_review, "is_configured", lambda: True)
     monkeypatch.setattr(ai_review, "transcribe_bom_with_ai", lambda path, page: {
         "items": [{"item": "1", "description": "flange", "quantity": 2, "unit": "ea", "notes": ""}],
         "issues": [], "provider": "fake", "model": "fake"})
@@ -126,7 +126,7 @@ def test_ai_fallback_transcribes_unreadable_bom(tmp_path, monkeypatch):
     monkeypatch.setattr(drawing_ocr, "inspect_image_page",
                         lambda page, page_no: ([], [{"type": "ocr_bom", "page": page_no,
                                                      "reconstructed": False, "message": "BOM unreadable"}]))
-    monkeypatch.setattr(ai_review, "is_enabled", lambda: True)
+    monkeypatch.setattr(ai_review, "is_configured", lambda: True)
 
     class FakeProvider(ai_review.Provider):
         name, default_model = "fake", "test"
@@ -176,7 +176,7 @@ def test_invalid_ai_bom_response_still_requires_clarification(tmp_path, monkeypa
     monkeypatch.setattr(drawing_ocr, "inspect_image_page",
                         lambda page, page_no: ([], [{"type": "ocr_bom", "page": page_no,
                                                      "reconstructed": False, "message": "BOM unreadable"}]))
-    monkeypatch.setattr(ai_review, "is_enabled", lambda: True)
+    monkeypatch.setattr(ai_review, "is_configured", lambda: True)
 
     class FakeProvider(ai_review.Provider):
         name, default_model = "fake", "test"

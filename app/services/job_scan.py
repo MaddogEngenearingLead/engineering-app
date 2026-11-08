@@ -214,17 +214,10 @@ def _replay_user_locations(materials: list[dict], previous: list[dict]) -> None:
 
 
 def _run_ai(result: dict, pid_path: str, scope_text: str, materials: list[dict]) -> str:
-    """Optional AI second opinion; adds its findings as flags. Never fails the scan."""
+    """Run the required AI second opinion and add its findings as review flags."""
     from app.services import ai_review
 
-    if not ai_review.is_enabled():
-        return ""
-    try:
-        review = ai_review.review_with_ai(pid_path, scope_text, materials)
-    except Exception as exc:
-        logger.warning("AI review skipped: %s", exc)
-        result["ai_review"] = {"error": str(exc)}
-        return f"AI review was skipped: {exc}"
+    review = ai_review.review_with_ai(pid_path, scope_text, materials)
     result.setdefault("flags", []).extend(review["flags"])
     result["ai_review"] = {k: review[k] for k in ("provider", "model", "summary", "key_page")}
     return f"AI review: {review['summary']}" if review["summary"] else "AI review done."
@@ -238,6 +231,8 @@ def run_job_scan(jm: JobManager, job_number: str, demo_pages: list[int] | None =
     ``error`` (plus ``message``). Never raises.
     """
     try:
+        from app.services import ai_review
+
         job_dir, _, _ = jm.get_job_dirs(job_number)
         if not job_dir:
             return {"status": "error", "message": f"Job {job_number} not found."}
@@ -247,6 +242,7 @@ def run_job_scan(jm: JobManager, job_number: str, demo_pages: list[int] | None =
         if not pid_files:
             return {"status": "error", "message": "No P&ID file found for this job."}
         pid_path = pid_files[0]
+        ai_review.require_provider()
 
         # The scope is optional; without one the scan relies on the P&ID itself.
         scope_text = ""
@@ -273,6 +269,8 @@ def run_job_scan(jm: JobManager, job_number: str, demo_pages: list[int] | None =
 
             if result.get("status") not in ("completed", "needs_clarification"):
                 raise ValueError(result.get("message") or "BOM scan failed")
+            materials = result.get("materials") or []
+            ai_note = _run_ai(result, str(pid_path), scope_text, materials)
             if result.get("status") == "needs_clarification":
                 questions = result.get("questions") or []
                 message = questions[0].get("message") if questions else "Scan needs clarification."
@@ -290,12 +288,10 @@ def run_job_scan(jm: JobManager, job_number: str, demo_pages: list[int] | None =
 
             # Validate the initial scan even when replaying answers requires re-export.
             previous = load_completed_review(jm, job_number) or {}
-            materials = result.get("materials") or []
             with pid_path.open("rb") as source:
                 pid_sha256 = hashlib.file_digest(source, "sha256").hexdigest()
             if previous.get("pid_sha256") == pid_sha256:
                 _replay_user_locations(materials, previous.get("materials") or [])
-            ai_note = _run_ai(result, str(pid_path), scope_text, materials)
             answers = _replay_answers(result, materials, previous.get("answers") or {})
             if answers or previous.get("clarifications") or any(
                 loc.get("location_source") == "user" for m in materials for loc in m.get("locations") or []

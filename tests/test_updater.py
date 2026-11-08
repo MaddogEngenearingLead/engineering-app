@@ -1,4 +1,8 @@
+import zipfile
+import stat
+
 import httpx
+import pytest
 
 from app.services import updater
 
@@ -20,13 +24,13 @@ def _patch(monkeypatch, status, payload, platform="win32"):
 
 
 def test_update_found(monkeypatch):
-    _patch(monkeypatch, 200, _release("v2.0.0", ["JobManager.exe", "JobManager-macos.zip"]))
+    _patch(monkeypatch, 200, _release("v2.0.0", ["JobManager-windows.zip", "JobManager-macos.zip"]))
     info = updater.check_for_update("1.0.0")
-    assert info and info.version == "2.0.0" and info.asset_name == "JobManager.exe"
+    assert info and info.version == "2.0.0" and info.asset_name == "JobManager-windows.zip"
 
 
 def test_macos_asset(monkeypatch):
-    _patch(monkeypatch, 200, _release("v2.0.0", ["JobManager.exe", "JobManager-macos.zip"]), "darwin")
+    _patch(monkeypatch, 200, _release("v2.0.0", ["JobManager-windows.zip", "JobManager-macos.zip"]), "darwin")
     assert updater.check_for_update("1.0.0").asset_name == "JobManager-macos.zip"
 
 
@@ -36,7 +40,7 @@ def test_update_token_is_sent_as_bearer(monkeypatch):
 
 
 def test_no_update_when_current(monkeypatch):
-    _patch(monkeypatch, 200, _release("v1.0.0", ["JobManager.exe"]))
+    _patch(monkeypatch, 200, _release("v1.0.0", ["JobManager-windows.zip"]))
     assert updater.check_for_update("1.0.0") is None
 
 
@@ -57,8 +61,59 @@ def test_download(monkeypatch, tmp_path):
     monkeypatch.setattr(
         updater.httpx, "stream", lambda method, url, **kw: client.stream(method, url, headers=kw.get("headers"))
     )
-    info = updater.UpdateInfo("2.0.0", "", "JobManager.exe", "https://x/a")
+    info = updater.UpdateInfo("2.0.0", "", "JobManager-windows.zip", "https://x/a")
     assert updater.download_update(info, tmp_path).read_bytes() == b"binary"
+
+
+def test_windows_update_extracts_and_overlays_app_folder(tmp_path, monkeypatch):
+    install = tmp_path / "installed"
+    install.mkdir()
+    executable = install / "JobManager.exe"
+    executable.write_text("old")
+    downloaded = tmp_path / "update" / "JobManager-windows.zip"
+    downloaded.parent.mkdir()
+    with zipfile.ZipFile(downloaded, "w") as archive:
+        archive.writestr("JobManager.exe", "new")
+        archive.writestr("_internal/app.dll", "runtime")
+    monkeypatch.setattr(updater.sys, "platform", "win32")
+    monkeypatch.setattr(updater.sys, "executable", str(executable))
+    monkeypatch.setattr(updater.subprocess, "Popen", lambda *args, **kwargs: None)
+
+    updater.apply_update(downloaded)
+
+    assert (downloaded.parent / "extracted" / "JobManager.exe").read_text() == "new"
+    script = (downloaded.parent / "apply_update.bat").read_text()
+    assert "robocopy" in script and str(install) in script
+
+
+def test_update_preserves_executable_and_symlink(tmp_path):
+    downloaded = tmp_path / "update.zip"
+    executable = zipfile.ZipInfo("JobManager.app/Contents/MacOS/JobManager")
+    executable.external_attr = (stat.S_IFREG | 0o755) << 16
+    link = zipfile.ZipInfo("JobManager.app/Contents/MacOS/tool")
+    link.create_system = 3
+    link.external_attr = (stat.S_IFLNK | 0o777) << 16
+    with zipfile.ZipFile(downloaded, "w") as archive:
+        archive.writestr(executable, "runtime")
+        archive.writestr(link, "JobManager")
+
+    updater._extract_update(downloaded, tmp_path / "extracted")
+
+    root = tmp_path / "extracted" / "JobManager.app" / "Contents" / "MacOS"
+    assert (root / "JobManager").stat().st_mode & 0o111
+    assert (root / "tool").is_symlink()
+    assert (root / "tool").read_text() == "runtime"
+
+
+def test_update_rejects_escaping_symlink(tmp_path):
+    downloaded = tmp_path / "update.zip"
+    link = zipfile.ZipInfo("unsafe")
+    link.create_system = 3
+    link.external_attr = (stat.S_IFLNK | 0o777) << 16
+    with zipfile.ZipFile(downloaded, "w") as archive:
+        archive.writestr(link, "../outside")
+    with pytest.raises(RuntimeError, match="unsafe symlink"):
+        updater._extract_update(downloaded, tmp_path / "extracted")
 
 
 def test_portable_jobs_folder_next_to_exe(tmp_path, monkeypatch):

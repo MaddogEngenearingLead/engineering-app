@@ -110,6 +110,9 @@ class JobManagerApp(TkinterDnD.Tk):
         self.updating = False
         self.show_dashboard()
         threading.Thread(target=self._check_updates, daemon=True).start()
+        from app.services.ollama_runtime import prepare_local_fallback
+
+        prepare_local_fallback()
 
     def clear_screen(self):
         for widget in self.body.winfo_children():
@@ -415,8 +418,6 @@ class JobManagerApp(TkinterDnD.Tk):
         self.show_dashboard()
         status = outcome.get("status")
         if status == "completed":
-            if (outcome.get("ai_note") or "").startswith("AI review was skipped"):
-                messagebox.showinfo("AI review", outcome["ai_note"] + "\n\nThe normal BOM was still generated.")
             self.open_review(job_number)
             return
         if status == "needs_scope_review":
@@ -430,7 +431,7 @@ class JobManagerApp(TkinterDnD.Tk):
 
 
 class AISettingsWindow(tk.Toplevel):
-    """Turn the optional AI review on or off and choose the provider and key."""
+    """Configure the required AI provider."""
 
     def __init__(self, parent):
         super().__init__(parent)
@@ -443,9 +444,11 @@ class AISettingsWindow(tk.Toplevel):
         self.scroller = ScrollFrame(self, padx=20, pady=20)
         self.scroller.pack(fill="both", expand=True)
         self.body = self.scroller.body
-        self.enabled = tk.BooleanVar(value=bool(self.settings.get("enabled")))
-        tk.Checkbutton(self.body, text="Use AI to double-check the BOM when it is generated",
-                       variable=self.enabled).pack(anchor="w")
+        tk.Label(self.body, text=(
+            "AI is required for every scan. The selected provider is tried first; "
+            "bundled local Ollama is used only if it is unavailable or fails. "
+            "Ollama starts automatically and downloads its model on first launch."),
+            justify="left", wraplength=600).pack(anchor="w")
         tk.Label(self.body, text="Provider:").pack(anchor="w", pady=(12, 0))
         self.labels = {cls.label: name for name, cls in ai_review.PROVIDERS.items()}
         self.provider = ttk.Combobox(self.body, values=list(self.labels), state="readonly", width=44)
@@ -454,7 +457,8 @@ class AISettingsWindow(tk.Toplevel):
         self.provider.set(current)
         self.provider.pack(anchor="w")
         self.active_provider = self.labels[current]
-        tk.Label(self.body, text="API key:").pack(anchor="w", pady=(12, 0))
+        tk.Label(self.body, text="API key (optional; local Ollama is the fallback):"
+                 ).pack(anchor="w", pady=(12, 0))
         self.key = tk.Entry(self.body, width=48, show="*")
         self.key.insert(0, self.settings.get("api_key", ""))
         self.key.pack(anchor="w")
@@ -478,10 +482,10 @@ class AISettingsWindow(tk.Toplevel):
         self._set_endpoint_state()
         self.provider.bind("<<ComboboxSelected>>", self._change_provider)
         tk.Label(self.body, justify="left", fg="#555", text=(
-            "Each provider needs its own API key and vision-capable model.\n"
+            "A configured provider is tried before local Ollama. Leave the key blank to use Ollama locally.\n"
             "ChatGPT uses an OpenAI API key; ChatGPT subscriptions do not include API access.\n"
             "Grok, Groq, Mistral, OpenRouter and Together require a model ID.\n"
-            "When enabled, drawing pages and scope are sent to the selected provider.\n"
+            "When the selected provider is used, drawing pages, scope and BOM data are sent to it.\n"
             "AI-transcribed BOM rows are provisional and must be checked.")
         ).pack(anchor="w", pady=(10, 0))
         row = tk.Frame(self.body)
@@ -522,19 +526,16 @@ class AISettingsWindow(tk.Toplevel):
 
     def save(self):
         key = self.key.get().strip()
-        if self.enabled.get() and not key:
-            messagebox.showwarning("AI settings", "Enter an API key to turn AI review on.", parent=self)
-            return
-        if self.enabled.get() and self.active_provider == "openai_compatible" and (
+        if key and self.active_provider == "openai_compatible" and (
                 not self.model.get().strip() or not self.base_url.get().strip()):
             messagebox.showwarning("AI settings", "Enter a model and HTTPS base URL for this provider.", parent=self)
             return
-        if self.enabled.get() and issubclass(self.ai.PROVIDERS[self.active_provider],
-                                             self.ai.VisionEndpointProvider) and not self.model.get().strip():
+        if key and issubclass(self.ai.PROVIDERS[self.active_provider],
+                      self.ai.VisionEndpointProvider) and not self.model.get().strip():
             messagebox.showwarning("AI settings", "Enter a vision-capable model ID for this provider.", parent=self)
             return
         self._remember_fields()
-        self.settings.update(enabled=self.enabled.get(), api_key=key, provider=self.active_provider)
+        self.settings.update(enabled=True, api_key=key, provider=self.active_provider)
         self.ai.save_settings(self.settings)
         self.destroy()
 

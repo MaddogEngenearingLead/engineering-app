@@ -82,6 +82,65 @@ def test_ai_scope_draft_requests_text_only_grounded_output():
     assert draft["sections"][0]["tasks"][0]["sources"] == ["P3", "BOM-12"]
 
 
+def test_ai_uses_local_ollama_only_after_primary_provider_fails(monkeypatch):
+    class Primary:
+        name, model = "primary", "cloud-model"
+
+        def generate(self, prompt, images):
+            raise ai_review.AIError("provider unavailable")
+
+    class Local:
+        name, model = "ollama", "qwen3-vl:4b"
+
+        def generate(self, prompt, images):
+            return '{"key_page": 2, "summary": "Local review.", "missing": [], "not_needed": []}'
+
+    monkeypatch.setattr(ai_review, "get_provider", lambda *_args, **_kwargs: Primary())
+    monkeypatch.setattr(ai_review, "OllamaProvider", Local)
+    monkeypatch.setattr(ai_review, "render_pages", lambda _path: [b"png"])
+    result = ai_review.review_with_ai("drawing.pdf", "Install valve.", [])
+    assert result["provider"] == "ollama"
+    assert result["summary"] == "Local review."
+
+
+def test_ai_uses_ollama_when_no_primary_provider_is_configured(monkeypatch):
+    class Local:
+        name, model = "ollama", "qwen3-vl:4b"
+
+        def generate(self, prompt, images):
+            return ('{"sections":[{"title":"Mechanical","tasks":[{"text":"Confirm work.",'
+                    '"sources":["P1"],"verify":true}]}]}')
+
+    def no_provider(*_args, **_kwargs):
+        raise ai_review.AIError("No API key set.")
+
+    monkeypatch.setattr(ai_review, "get_provider", no_provider)
+    monkeypatch.setattr(ai_review, "OllamaProvider", Local)
+    result = ai_review.draft_scope_with_ai("P1: Drawing note.", "BOM-1 | 1 | Valve")
+    assert result["provider"] == "ollama"
+    assert result["sections"][0]["title"] == "Mechanical"
+
+
+def test_ai_reports_both_primary_and_local_fallback_failures(monkeypatch):
+    class Primary:
+        name, model = "primary", "cloud-model"
+
+        def generate(self, prompt, images):
+            raise ai_review.AIError("provider unavailable")
+
+    class Local:
+        name, model = "ollama", "qwen3-vl:4b"
+
+        def generate(self, prompt, images):
+            raise ai_review.AIError("local server unavailable")
+
+    monkeypatch.setattr(ai_review, "get_provider", lambda *_args, **_kwargs: Primary())
+    monkeypatch.setattr(ai_review, "OllamaProvider", Local)
+    monkeypatch.setattr(ai_review, "render_pages", lambda _path: [b"png"])
+    with pytest.raises(ai_review.AIError, match="provider unavailable.*local server unavailable"):
+        ai_review.review_with_ai("drawing.pdf", "Install valve.", [])
+
+
 def test_anthropic_protocol_includes_images(monkeypatch):
     def request(url, body, headers):
         assert url == "https://api.anthropic.com/v1/messages" and headers["x-api-key"] == "test"
@@ -143,7 +202,6 @@ def test_settings_named_providers_keep_separate_fields(tmp_path, monkeypatch):
         assert str(window.base_url.cget("state")) == "disabled"
         window.key.insert(0, "groq-key")
         window.model.insert(0, "vision-model")
-        window.enabled.set(True)
         window.save()
         settings = ai_review.load_settings()
         assert settings["api_keys"]["gemini"] == "gemini-key"

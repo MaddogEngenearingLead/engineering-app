@@ -65,15 +65,26 @@ function Find-Iscc {
     return $null
 }
 
-Write-Host "[1/3] Building GUI executable..." -ForegroundColor Cyan
-python build_exe.py
+Write-Host "[1/4] Preparing Ollama runtime..." -ForegroundColor Cyan
+$ollamaBundle = Join-Path $repoRoot "build\ollama-bundle"
+python scripts/prepare_ollama_bundle.py --output $ollamaBundle
+if ($LASTEXITCODE -ne 0) {
+    throw "Ollama runtime preparation failed with exit code $LASTEXITCODE"
+}
+$env:OLLAMA_BUNDLE_DIR = Join-Path $ollamaBundle "ollama-runtime"
 
-$exePath = Join-Path $repoRoot "dist\JobManager.exe"
+Write-Host "[2/4] Building GUI application..." -ForegroundColor Cyan
+python build_exe.py
+if ($LASTEXITCODE -ne 0) {
+    throw "GUI build failed with exit code $LASTEXITCODE"
+}
+
+$exePath = Join-Path $repoRoot "dist\JobManager\JobManager.exe"
 if (-not (Test-Path $exePath)) {
     throw "Build failed: $exePath not found."
 }
 
-Write-Host "[2/3] Locating Inno Setup compiler..." -ForegroundColor Cyan
+Write-Host "[3/4] Locating Inno Setup compiler..." -ForegroundColor Cyan
 $iscc = Find-Iscc -Override $InnoCompilerPath
 if (-not $iscc) {
     throw "Inno Setup compiler (ISCC.exe) not found. Install it with: winget install --id JRSoftware.InnoSetup -e   (then rerun), or pass -InnoCompilerPath."
@@ -85,7 +96,7 @@ if (-not (Test-Path $issPath)) {
     throw "Installer script not found at: $issPath"
 }
 
-Write-Host "[3/3] Compiling installer..." -ForegroundColor Cyan
+Write-Host "[4/4] Compiling installer..." -ForegroundColor Cyan
 & "$iscc" "$issPath"
 if ($LASTEXITCODE -ne 0) {
     throw "Inno Setup compile failed with exit code $LASTEXITCODE"

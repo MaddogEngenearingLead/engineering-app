@@ -732,11 +732,11 @@ def unidentified_tags(text: str, known: set) -> list[str]:
 # --------------------------------------------------------------------------
 
 def _classify_with_ai(pdf_path: str, demo: list[int], new: list[int]):
-    """Fall back to the optional AI to read the index; returns (demo, new, note) or the inputs unchanged."""
+    """Use AI to read the index; preserve inputs if it cannot classify both page groups."""
     try:
         from app.services import ai_review
 
-        if not ai_review.is_enabled():
+        if not ai_review.is_configured():
             return demo, new, None
         found = ai_review.classify_pages_with_ai(pdf_path)
     except Exception as exc:
@@ -829,7 +829,7 @@ def build_scoped_bom(
         if unreadable:
             from app.services import ai_review
 
-            if ai_review.is_enabled():
+            if ai_review.is_configured():
                 for flag in unreadable:
                     page = flag.get("page")
                     if not isinstance(page, int) or not 1 <= page <= n_pages:

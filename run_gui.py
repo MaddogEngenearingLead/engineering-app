@@ -1,8 +1,9 @@
 """Entry point for the Job Manager desktop GUI (also used for the PyInstaller build)."""
 import sys
+import os
 
 
-def selftest(require_bundled_ocr: bool = False) -> int:
+def selftest(require_bundled_ocr: bool = False, require_bundled_ollama: bool = False) -> int:
     """Import everything the app needs and run a real PDF scan; used to verify packaged builds."""
     import tempfile
     from pathlib import Path
@@ -19,8 +20,17 @@ def selftest(require_bundled_ocr: bool = False) -> int:
 
     assert Path(certifi.where()).is_file(), "CA bundle missing"
     bundle = Path(getattr(sys, "_MEIPASS", "")) / "tesseract"
+    ollama_runtime = Path(getattr(sys, "_MEIPASS", "")) / "ollama-runtime"
     if require_bundled_ocr:
         assert getattr(sys, "frozen", False) and bundle.is_dir(), "bundled OCR missing"
+    if require_bundled_ollama:
+        executable = ("ollama.exe" if sys.platform.startswith("win")
+                      else "Ollama.app/Contents/Resources/ollama")
+        bundled_executable = ollama_runtime / executable
+        assert getattr(sys, "frozen", False) and bundled_executable.is_file(), \
+            "bundled Ollama runtime missing"
+        assert sys.platform.startswith("win") or os.access(bundled_executable, os.X_OK), \
+            "bundled Ollama executable is not executable"
     if getattr(sys, "frozen", False) and bundle.is_dir():
         from PIL import Image, ImageDraw, ImageFont
         from app.services.drawing_ocr import _searchable_page, _tesseract
@@ -39,6 +49,15 @@ def selftest(require_bundled_ocr: bool = False) -> int:
     c.drawString(72, 750, "NEW WORK P&ID"); c.drawString(72, 720, "TK-1 TANK"); c.drawString(72, 700, "MOV-001 VALVE")
     c.save()
     (d / "scope.txt").write_text("Install tank TK-1 and valve MOV-001.")
+    from app.services import ai_review
+
+    class SelfTestProvider:
+        name, model = "selftest", "selftest"
+
+    ai_review.get_provider = lambda *_args, **_kwargs: SelfTestProvider()
+    ai_review.review_with_ai = lambda *_args, **_kwargs: {
+        "flags": [], "summary": "Self-test review.", "key_page": None,
+        "provider": "selftest", "model": "selftest"}
     jm = JobManager(str(d / "uploads"))
     jm.create_job("T-1")
     jm.add_job_files("T-1", str(d / "pid.pdf"), str(d / "scope.txt"))
@@ -56,8 +75,10 @@ def selftest(require_bundled_ocr: bool = False) -> int:
 
 
 if __name__ == "__main__":
-    if "--selftest" in sys.argv or "--selftest-require-bundled-ocr" in sys.argv:
-        sys.exit(selftest(require_bundled_ocr="--selftest-require-bundled-ocr" in sys.argv))
+    if ("--selftest" in sys.argv or "--selftest-require-bundled-ocr" in sys.argv
+            or "--selftest-require-bundled-ollama" in sys.argv):
+        sys.exit(selftest(require_bundled_ocr="--selftest-require-bundled-ocr" in sys.argv,
+                          require_bundled_ollama="--selftest-require-bundled-ollama" in sys.argv))
     from app.gui.job_manager_gui import main
 
     main()

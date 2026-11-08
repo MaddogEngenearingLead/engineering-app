@@ -51,6 +51,11 @@ def test_unicode_csv_is_utf8_when_system_default_is_windows_encoding(tmp_path, m
     assert "90° elbow" in Path(published["bom_csv"]).read_text(encoding="utf-8")
 
 
+@pytest.fixture(autouse=True)
+def _required_ai(required_ai):
+    pass
+
+
 @pytest.fixture
 def job(tmp_path, freetext_pdf):
     jm = JobManager(str(tmp_path / "jobs"))

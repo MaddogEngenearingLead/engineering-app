@@ -238,12 +238,22 @@ async def scan_pid(
                 raise ValueError
         except ValueError:
             raise HTTPException(status_code=400, detail="highlight_mapping must be a JSON object.")
+    parsed_demo_pages = _parse_pages(demo_pages, "demo_pages")
+    parsed_new_work_pages = _parse_pages(new_work_pages, "new_work_pages")
 
     # BOM exports must outlive the request, so they go to a persistent folder
     # (the uploaded PDF itself is still processed from a temp dir).
     export_dir = Path(settings.upload_dir) / "scan_exports"
     export_dir.mkdir(parents=True, exist_ok=True)
 
+    from app.services import ai_review
+
+    try:
+        ai_review.require_provider()
+    except ai_review.AIError as exc:
+        raise HTTPException(status_code=503, detail=f"AI is required for every scan: {exc}") from exc
+
+    result = {}
     with tempfile.TemporaryDirectory() as tmpdir:
         pdf_path = Path(tmpdir) / sanitize_filename(file.filename)
         pdf_path.write_bytes(content)
@@ -252,8 +262,8 @@ async def scan_pid(
         result = build_scoped_bom(
             str(pdf_path),
             scope_text=scope_of_work.strip(),
-            demo_pages=_parse_pages(demo_pages, "demo_pages"),
-            new_work_pages=_parse_pages(new_work_pages, "new_work_pages"),
+            demo_pages=parsed_demo_pages,
+            new_work_pages=parsed_new_work_pages,
             highlight_mapping=mapping,
             legend_page=legend_page,
             key_page=key_page,
@@ -262,6 +272,17 @@ async def scan_pid(
             source_file=pdf_path.name,
             output_dir=str(export_dir),
         )
+        try:
+            ai_result = ai_review.review_with_ai(
+                str(pdf_path), scope_of_work.strip(), result.get("materials") or [])
+        except ai_review.AIError as exc:
+            for key in ("bom_pdf", "bom_json", "bom_csv"):
+                export_path = result.get(key)
+                if export_path:
+                    Path(export_path).unlink(missing_ok=True)
+            raise HTTPException(status_code=503, detail=f"Required AI review failed: {exc}") from exc
+        result.setdefault("flags", []).extend(ai_result["flags"])
+        result["ai_review"] = {key: ai_result[key] for key in ("provider", "model", "summary", "key_page")}
 
         if result.get("status") == "completed":
             result["scope_of_work"] = scope_of_work.strip()[:200]
@@ -349,6 +370,9 @@ async def scan_job_pid(
     bom_export_dir = job_dir / "bom_exports"
 
     try:
+        from app.services import ai_review
+
+        ai_review.require_provider()
         with staged_job_exports(str(bom_export_dir)) as stage:
             result = build_scoped_bom(
                 str(pid_path), scope_text=effective_scope,
@@ -358,6 +382,11 @@ async def scan_job_pid(
                 review_notes=notes_list, job_id=job_id, source_file=pid_path.name,
                 output_dir=str(stage),
             )
+            ai_review_result = ai_review.review_with_ai(
+                str(pid_path), effective_scope, result.get("materials") or [])
+            result.setdefault("flags", []).extend(ai_review_result["flags"])
+            result["ai_review"] = {key: ai_review_result[key]
+                                   for key in ("provider", "model", "summary", "key_page")}
             result.update({
                 "job_number": job_number,
                 "pid_file": pid_path.name,
@@ -383,6 +412,8 @@ async def scan_job_pid(
                     "review_notes": notes_list,
                 })
         return result
+    except ai_review.AIError as e:
+        raise HTTPException(status_code=503, detail=f"Required AI review failed: {e}") from e
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error generating BOM: {str(e)}")
 

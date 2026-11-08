@@ -1,9 +1,8 @@
-"""Optional AI second opinion on the P&ID scan.
+"""AI review and drafting for P&ID scans.
 
-The rule-based scan always runs first. When AI review is switched on, the drawing pages, the
-scope and the scan's BOM are sent to an AI provider, which finds the legend/key and lists what
-the scope needs that the BOM lacks (and what the BOM has that the scope doesn't need). Its
-findings become ordinary review questions, so nothing changes without the user's approval.
+The rule-based scan always runs first. Every scan also sends drawing pages, the
+scope and the scan's BOM to a configured AI provider. AI suggestions become
+ordinary review questions, so nothing changes without the user's approval.
 
 Providers are pluggable: add a class to ``PROVIDERS`` and pick it in the AI settings.
 Settings live in ``ai_settings.json`` in the user's app-data folder (or ``AI_SETTINGS_FILE``).
@@ -35,7 +34,7 @@ class AIError(Exception):
 
 # ---------------------------------------------------------------- settings
 
-DEFAULTS = {"enabled": False, "provider": "gemini", "api_key": "", "api_keys": {},
+DEFAULTS = {"enabled": True, "provider": "gemini", "api_key": "", "api_keys": {},
             "models": {}, "base_urls": {}}
 
 
@@ -89,6 +88,23 @@ class Provider:
     def generate(self, prompt: str, images: list[bytes]) -> str:
         """Send the prompt and PNG page images; return the model's JSON text reply."""
         raise NotImplementedError
+
+
+class OllamaProvider(Provider):
+    name = "ollama"
+    label = "Ollama local fallback"
+    default_model = "qwen3-vl:4b"
+
+    def __init__(self):
+        super().__init__("")
+
+    def generate(self, prompt: str, images: list[bytes]) -> str:
+        from app.services import ollama_runtime
+
+        try:
+            return ollama_runtime.chat(self.model, prompt, images)
+        except RuntimeError as exc:
+            raise AIError(f"Local Ollama fallback failed: {exc}") from exc
 
 
 class GeminiProvider(Provider):
@@ -281,9 +297,52 @@ def get_provider(settings: dict | None = None) -> Provider:
     return cls(key, (s.get("models") or {}).get(cls.name), base_url)
 
 
-def is_enabled() -> bool:
-    s = load_settings()
-    return bool(s.get("enabled") and s.get("api_key"))
+def require_provider() -> Provider:
+    """Return a configured primary provider or the local Ollama fallback."""
+    try:
+        return get_provider()
+    except AIError:
+        return OllamaProvider()
+
+
+def is_configured() -> bool:
+    from app.services.ollama_runtime import ollama_executable
+
+    return bool(ollama_executable() or _has_primary_provider())
+
+
+def _has_primary_provider() -> bool:
+    try:
+        get_provider()
+    except AIError:
+        return False
+    return True
+
+
+def _generate_reply(prompt: str, images: list[bytes],
+                    provider: Provider | None = None) -> tuple[dict, Provider]:
+    if provider is not None:
+        return parse_reply(provider.generate(prompt, images)), provider
+
+    primary = None
+    primary_error = None
+    try:
+        primary = get_provider()
+    except AIError as exc:
+        primary_error = exc
+    if primary is not None:
+        try:
+            return parse_reply(primary.generate(prompt, images)), primary
+        except AIError as exc:
+            primary_error = exc
+
+    fallback = OllamaProvider()
+    try:
+        return parse_reply(fallback.generate(prompt, images)), fallback
+    except AIError as exc:
+        if primary_error:
+            raise AIError(f"Primary AI failed ({primary_error}); {exc}") from exc
+        raise
 
 
 # ---------------------------------------------------------------- review
@@ -344,12 +403,14 @@ if this region has no readable BOM rows. Preserve approximate quantities in note
 
 def transcribe_bom_with_ai(pdf_path: str, page_number: int, provider: Provider | None = None) -> dict:
     """Transcribe a suspect BOM page; all returned rows remain unverified suggestions."""
-    provider = provider or get_provider()
     regions = render_bom_regions(pdf_path, page_number)
     items: dict[str, dict] = {}
     issues: list[str] = []
+    selected_provider = provider
+    used_provider = None
     for region_no, image in enumerate(regions, 1):
-        reply = parse_reply(provider.generate(_BOM_TRANSCRIPTION_PROMPT.format(page=page_number), [image]))
+        reply, used_provider = _generate_reply(
+            _BOM_TRANSCRIPTION_PROMPT.format(page=page_number), [image], selected_provider)
         if not isinstance(reply.get("complete"), bool) or not isinstance(reply.get("items"), list):
             raise AIError(f"AI response for BOM page {page_number}, region {region_no}, has an invalid shape.")
         if not reply["complete"]:
@@ -376,9 +437,12 @@ def transcribe_bom_with_ai(pdf_path: str, page_number: int, provider: Provider |
             if tag in items and items[tag] != row:
                 raise AIError(f"AI returned conflicting readings for BOM item {tag} on page {page_number}.")
             items[tag] = row
+    if used_provider is None:
+        raise AIError(f"No readable BOM region was found on page {page_number}.")
     if not items:
         raise AIError(f"AI found no usable BOM rows on page {page_number}.")
-    return {"items": list(items.values()), "issues": issues, "provider": provider.name, "model": provider.model}
+    return {"items": list(items.values()), "issues": issues,
+            "provider": used_provider.name, "model": used_provider.model}
 
 
 SCOPE_DRAFT_PROMPT = """Draft a concise, organized construction scope of work from the supplied source evidence.
@@ -417,10 +481,9 @@ EXTRACTIVE REVIEW INDEX (heuristic, possibly incomplete or wrong; locator only):
 def draft_scope_with_ai(drawing_evidence: str, bom_rows: str, review_index: str = "",
                         provider: Provider | None = None) -> dict:
     """Create a source-cited scope draft; the caller must keep it in human review."""
-    provider = provider or get_provider()
     prompt = SCOPE_DRAFT_PROMPT.format(drawing=drawing_evidence[:40000], bom=bom_rows[:20000],
                                        review_index=review_index[:12000])
-    reply = parse_reply(provider.generate(prompt, []))
+    reply, provider = _generate_reply(prompt, [], provider)
     sections = reply.get("sections")
     if not isinstance(sections, list) or not sections:
         raise AIError("AI returned no scope sections.")
@@ -471,11 +534,10 @@ def classify_pages_with_ai(pdf_path: str, provider: Provider | None = None) -> d
     Returns {"demo_pages": [...], "new_work_pages": [...], "index_page": int|None, "summary": str}
     with 1-based, de-duplicated, in-range page numbers.
     """
-    provider = provider or get_provider()
     images = render_pages(pdf_path, limit=40, max_pixels=1600)
     if not images:
         raise AIError("The drawing has no pages to read.")
-    reply = parse_reply(provider.generate(CLASSIFY_PROMPT.format(n=len(images)), images))
+    reply, provider = _generate_reply(CLASSIFY_PROMPT.format(n=len(images)), images, provider)
 
     def pages(key):
         out = []
@@ -550,12 +612,11 @@ def build_flags(reply: dict, materials: list[dict]) -> list[dict]:
 def review_with_ai(pid_path: str, scope_text: str, materials: list[dict],
                    provider: Provider | None = None) -> dict:
     """Returns {"flags": [...], "summary": str, "key_page": int|None, "provider": str, "model": str}."""
-    provider = provider or get_provider()
     images = render_pages(pid_path)
     if not images:
         raise AIError("The drawing has no pages to review.")
     prompt = PROMPT.format(scope=scope_text[:12000], bom=_bom_text(materials))
-    reply = parse_reply(provider.generate(prompt, images))
+    reply, provider = _generate_reply(prompt, images, provider)
     key_page = reply.get("key_page")
     return {"flags": build_flags(reply, materials), "summary": str(reply.get("summary") or "")[:400],
             "key_page": key_page if isinstance(key_page, int) else None,

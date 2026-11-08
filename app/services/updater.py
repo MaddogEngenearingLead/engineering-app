@@ -1,12 +1,13 @@
 """Check GitHub Releases for a newer desktop build and apply it in place.
 
-Release assets are expected to be ``JobManager.exe`` (Windows) and
+Release assets are expected to be ``JobManager-windows.zip`` (Windows) and
 ``JobManager-macos.zip`` (macOS), as produced by the Build GUI workflow.
 """
 from __future__ import annotations
 
 import os
 import re
+import stat
 import subprocess
 import sys
 import tempfile
@@ -41,7 +42,7 @@ def is_newer(candidate: str, current: str) -> bool:
 
 def asset_name_for_platform() -> str | None:
     if sys.platform.startswith("win"):
-        return "JobManager.exe"
+        return "JobManager-windows.zip"
     if sys.platform == "darwin":
         return "JobManager-macos.zip"
     return None
@@ -108,6 +109,29 @@ def download_update(info: UpdateInfo, dest_dir: Path | None = None) -> Path:
     return target
 
 
+def _extract_update(downloaded: Path, destination: Path) -> None:
+    root = destination.resolve()
+    links = []
+    with zipfile.ZipFile(downloaded) as archive:
+        for entry in archive.infolist():
+            path = (destination / entry.filename).resolve()
+            if not path.is_relative_to(root):
+                raise RuntimeError("The update archive contains an unsafe path.")
+            mode = entry.external_attr >> 16
+            if stat.S_ISLNK(mode):
+                link = Path(archive.read(entry).decode("utf-8"))
+                if link.is_absolute() or not (path.parent / link).resolve().is_relative_to(root):
+                    raise RuntimeError("The update archive contains an unsafe symlink.")
+                links.append((path, link))
+                continue
+            archive.extract(entry, destination)
+            if mode & 0o111:
+                path.chmod(path.stat().st_mode | 0o111)
+    for path, link in links:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.symlink_to(link)
+
+
 def apply_update(downloaded: Path) -> None:
     """Start a helper that swaps in the new build after this process exits, then relaunches.
 
@@ -116,21 +140,25 @@ def apply_update(downloaded: Path) -> None:
     pid = os.getpid()
     if sys.platform.startswith("win"):
         current = Path(sys.executable)
+        install_dir = current.parent
+        extract_dir = downloaded.parent / "extracted"
+        _extract_update(downloaded, extract_dir)
+        if not (extract_dir / "JobManager.exe").is_file():
+            raise RuntimeError("The Windows update archive is missing JobManager.exe.")
         script = downloaded.parent / "apply_update.bat"
         script.write_text(
             "@echo off\r\n"
             ":wait\r\n"
-            f'move /Y "{downloaded}" "{current}" >nul 2>&1\r\n'
-            "if errorlevel 1 (\r\n"
+            f'tasklist /FI "PID eq {pid}" /NH | findstr /C:"{pid}" >nul\r\n'
+            "if not errorlevel 1 (\r\n"
             "  ping -n 2 127.0.0.1 >nul\r\n"
             "  goto wait\r\n"
             ")\r\n"
-            "ping -n 4 127.0.0.1 >nul\r\n"
-            # the old process's temp folder is gone; make the new exe unpack its own
-            "set _MEIPASS2=\r\n"
-            "set PYINSTALLER_RESET_ENVIRONMENT=1\r\n"
+            f'robocopy "{extract_dir}" "{install_dir}" /E /COPY:DAT /R:2 /W:1 >nul\r\n'
+            "if errorlevel 8 exit /b 1\r\n"
             f'start "" "{current}"\r\n'
-            '(goto) 2>nul & del "%~f0"\r\n'
+            "ping -n 3 127.0.0.1 >nul\r\n"
+            f'(goto) 2>nul & rmdir /S /Q "{downloaded.parent}"\r\n'
         )
         env = {k: v for k, v in os.environ.items() if not k.startswith(("_MEI", "_PYI"))}
         env["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
@@ -143,8 +171,7 @@ def apply_update(downloaded: Path) -> None:
         # .../JobManager.app/Contents/MacOS/JobManager -> .../JobManager.app
         app_bundle = Path(sys.executable).resolve().parents[2]
         extract_dir = downloaded.parent / "extracted"
-        with zipfile.ZipFile(downloaded) as zf:
-            zf.extractall(extract_dir)
+        _extract_update(downloaded, extract_dir)
         new_app = next(extract_dir.glob("*.app"))
         script = downloaded.parent / "apply_update.sh"
         script.write_text(

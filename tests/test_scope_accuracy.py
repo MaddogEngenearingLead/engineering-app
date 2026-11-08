@@ -208,7 +208,7 @@ def test_coloured_lines_are_reviewed_not_automatically_classified_as_pipe(pid, t
     assert '1/4" Check Valve' in descriptions and '6"x4" Fire Valve' in descriptions
 
 
-def test_every_item_has_location_and_review_roundtrip(pid, tmp_path):
+def test_every_item_has_location_and_review_roundtrip(pid, tmp_path, required_ai):
     from app.job_manager import JobManager
     from app.services.job_scan import load_review, run_job_scan, save_review
 
@@ -239,7 +239,7 @@ def test_scope_only_rows_explain_where_they_come_from(pid, tmp_path):
     assert row["location"]
 
 
-def test_answers_change_bom_and_resolve_question(pid, tmp_path):
+def test_answers_change_bom_and_resolve_question(pid, tmp_path, required_ai):
     import json
     from app.job_manager import JobManager
     from app.services.job_scan import load_review, run_job_scan, save_review
@@ -272,7 +272,7 @@ def test_answers_change_bom_and_resolve_question(pid, tmp_path):
     assert load_review(jm, "T-8")["answers"]["qx"]["id"] == "qx"
 
 
-def test_rescan_keeps_answers(pid, tmp_path):
+def test_rescan_keeps_answers(pid, tmp_path, required_ai):
     import json
     from app.job_manager import JobManager
     from app.services.job_scan import load_review, run_job_scan, save_review
@@ -301,7 +301,7 @@ def test_rescan_keeps_answers(pid, tmp_path):
     assert len(again["materials"]) == len(mats)
 
 
-def test_user_marked_component_location_survives_rescan_of_same_drawing(pid, tmp_path):
+def test_user_marked_component_location_survives_rescan_of_same_drawing(pid, tmp_path, required_ai):
     from app.job_manager import JobManager
     from app.services.job_scan import load_review, run_job_scan, save_review
 
@@ -331,7 +331,7 @@ def test_user_marked_component_location_survives_rescan_of_same_drawing(pid, tmp
 
 
 @pytest.mark.parametrize("change", ["drawing", "identity"])
-def test_user_marked_location_is_not_replayed_after_change(pid, tmp_path, change):
+def test_user_marked_location_is_not_replayed_after_change(pid, tmp_path, change, required_ai):
     from app.job_manager import JobManager
     from app.services.job_scan import load_review, run_job_scan, save_review
 
@@ -429,6 +429,8 @@ def test_ai_review_flags_and_answers(tmp_path, monkeypatch):
 def test_ai_settings_roundtrip(tmp_path, monkeypatch):
     from app.services import ai_review
     monkeypatch.setenv("AI_SETTINGS_FILE", str(tmp_path / "s.json"))
-    assert not ai_review.is_enabled()
+    assert not ai_review.is_configured()
     ai_review.save_settings({"enabled": True, "api_key": "k", "provider": "gemini"})
-    assert ai_review.is_enabled() and ai_review.get_provider().model == "gemini-3.8-flash"
+    assert ai_review.is_configured() and ai_review.get_provider().model == "gemini-3.8-flash"
+    ai_review.save_settings({"enabled": False, "api_key": "k", "provider": "gemini"})
+    assert ai_review.is_configured()

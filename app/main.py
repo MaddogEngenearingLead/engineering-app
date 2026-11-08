@@ -23,6 +23,9 @@ def create_app() -> FastAPI:
     )
 
     app.include_router(router, prefix=settings.api_prefix)
+    from app.services.ollama_runtime import prepare_local_fallback
+
+    app.add_event_handler("startup", prepare_local_fallback)
     return app
 
 

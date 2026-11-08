@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import re
 
 import pytest
 from pypdf import PdfReader, PdfWriter
@@ -60,3 +61,30 @@ def ambiguous_pdf(tmp_path):
             (shape + ["PI-2 gauge"], (0, 1, 0)),
         ],
     )
+
+
+@pytest.fixture
+def required_ai(monkeypatch):
+    """Provide deterministic AI responses to tests of scan orchestration."""
+    from app.services import ai_review
+
+    class TestProvider:
+        name = "test"
+        model = "test-model"
+
+    def draft_scope(drawing, bom, review_index="", provider=None):
+        source_ids = list(dict.fromkeys(re.findall(r"\b(?:AI-BOM-\d+|BOM-\d+|P\d+)\b",
+                                                    drawing + "\n" + bom)))
+        tasks = [{"text": line.lstrip("- ").strip(), "sources": [source_ids[0]], "verify": True}
+                 for line in review_index.splitlines() if line.strip() and source_ids]
+        if not tasks and source_ids:
+            tasks = [{"text": "Confirm the intended work against the source drawings.",
+                      "sources": [source_ids[0]], "verify": True}]
+        return {"sections": [{"title": "Review source evidence", "tasks": tasks}],
+                "provider": "test", "model": "test-model"}
+
+    monkeypatch.setattr(ai_review, "get_provider", lambda *_args, **_kwargs: TestProvider())
+    monkeypatch.setattr(ai_review, "review_with_ai", lambda *_args, **_kwargs: {
+        "flags": [], "summary": "Reviewed source evidence.", "key_page": None,
+        "provider": "test", "model": "test-model"})
+    monkeypatch.setattr(ai_review, "draft_scope_with_ai", draft_scope)

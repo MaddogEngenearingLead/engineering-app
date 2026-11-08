@@ -11,6 +11,11 @@ from app.services.job_scan import run_job_scan
 from app.services.scope_work import approve_scope_draft, load_scope_draft, summarize_scope
 
 
+@pytest.fixture(autouse=True)
+def _required_ai(required_ai):
+    pass
+
+
 def test_scope_summary_and_pdf_escape(tmp_path):
     scope = ("Project contact: Example Name.\nInstall valve <V-1> & gasket.\n"
              "Install valve <V-1> & gasket.\nExclude existing piping.")
@@ -32,6 +37,7 @@ def test_job_requires_scope_review_and_rescan(freetext_pdf, tmp_path):
     jm.add_job_files("101", str(freetext_pdf))
     result = run_job_scan(jm, "101")
     assert result["status"] == "needs_scope_review"
+    assert result["draft"]["generation_method"] == "ai"
     assert jm.get_scope_files("101") == []
     draft = load_scope_draft(jm, "101")
     assert "Confirm intended work" in draft["text"]
@@ -46,6 +52,42 @@ def test_job_requires_scope_review_and_rescan(freetext_pdf, tmp_path):
     data = json.loads(Path(result["result"]["bom_json"]).read_text())
     assert data["scope_of_work"] == approved
     assert "Exclude existing piping." in data["scope_summary"]
+
+
+def test_scan_uses_ollama_when_primary_ai_is_unconfigured(freetext_pdf, tmp_path, monkeypatch):
+    from app.services import ai_review
+
+    jm = JobManager(str(tmp_path / "jobs"))
+    jm.add_job_files("101", str(freetext_pdf))
+
+    class LocalFallback:
+        name, model = "ollama", "qwen3-vl:4b"
+
+    def missing_provider():
+        raise ai_review.AIError("No API key set.")
+
+    monkeypatch.setattr(ai_review, "get_provider", missing_provider)
+    monkeypatch.setattr(ai_review, "OllamaProvider", LocalFallback)
+    outcome = run_job_scan(jm, "101")
+    assert outcome["status"] == "needs_scope_review"
+    assert outcome["draft"]["generation_method"] == "ai"
+
+
+def test_scan_ai_failure_prevents_completion(freetext_pdf, tmp_path, monkeypatch):
+    from app.services import ai_review
+
+    jm = JobManager(str(tmp_path / "jobs"))
+    jm.add_job_files("101", str(freetext_pdf))
+    jm.save_scope_file("101", "scope.txt", b"Install TK-1.")
+
+    def fail(*args, **kwargs):
+        raise ai_review.AIError("provider unavailable")
+
+    monkeypatch.setattr(ai_review, "review_with_ai", fail)
+    outcome = run_job_scan(jm, "101")
+    assert outcome["status"] == "error"
+    assert "provider unavailable" in outcome["message"]
+    assert not (jm.get_job_dirs("101")[0] / "bom_exports" / "review.json").exists()
 
 
 def test_reject_stale_draft_and_existing_scope(freetext_pdf, tmp_path):
@@ -74,7 +116,7 @@ def test_draft_includes_drawing_notes_even_for_embedded_bom(tmp_path):
     jm.add_job_files("101", str(pdf))
     draft = create_scope_draft(jm, "101", jm.get_pid_files("101")[0],
                                {"new_work_pages": [], "materials": []})
-    assert "Drawing page 1, possible work note (item association unconfirmed): Install a new valve" in draft["text"]
+    assert "Install a new valve" in draft["text"]
     assert not jm.get_scope_files("101")
 
 
@@ -97,12 +139,11 @@ def test_scope_draft_links_explicit_identifiers_but_does_not_invent_work(tmp_pat
          "supplied_by": "OWNER", "installed_by": "CONTRACTOR"},
     ]}
     text = create_scope_draft(jm, "101", jm.get_pid_files("101")[0], result)["text"]
-    rows = text.splitlines()
-    assert "Replace V-101 with a new valve" in rows[0] and "drawing quantity: 2 ea" in rows[0]
-    assert "Remove V-102 and retain V-103" in rows[1]
-    assert "no item-specific instruction" in rows[2] and "quantity unknown" in rows[2]
-    assert "Install ITEM 12 at V-101" in rows[3] and "installed by: CONTRACTOR" in rows[3]
-    assert any("item association unconfirmed" in row and "Provide insulation" in row for row in rows)
+    assert "Replace V-101 with a new valve" in text and "drawing quantity: 2 ea" in text
+    assert "Remove V-102 and retain V-103" in text
+    assert "no item-specific instruction" in text and "quantity unknown" in text
+    assert "Install ITEM 12 at V-101" in text and "installed by: CONTRACTOR" in text
+    assert "Provide insulation" in text
 
 
 def test_ai_scope_draft_groups_tasks_and_keeps_only_valid_evidence(tmp_path, monkeypatch):
@@ -119,7 +160,7 @@ def test_ai_scope_draft_groups_tasks_and_keeps_only_valid_evidence(tmp_path, mon
         {"tag_id": "11", "description": "12 inch flange", "quantity": None,
          "origin": "drawing_bom", "unit": "", "page": 4},
     ]}
-    monkeypatch.setattr(ai_review, "is_enabled", lambda: True)
+    monkeypatch.setattr(ai_review, "is_configured", lambda: True)
     def fake_draft(drawing, bom, review_index=""):
         assert "P1:" in drawing
         assert "BOM-11 | 11 | 12 inch flange | drawing page 4" in bom
@@ -144,7 +185,7 @@ def test_ai_scope_draft_groups_tasks_and_keeps_only_valid_evidence(tmp_path, mon
     assert "[VERIFY]" in draft["text"]
 
 
-def test_ai_scope_draft_failure_shows_extractive_fallback_warning(tmp_path, monkeypatch):
+def test_ai_scope_draft_failure_blocks_scope_draft(tmp_path, monkeypatch):
     from app.services import ai_review
     from app.services.scope_work import create_scope_draft
     from tests.conftest import make_pdf
@@ -152,16 +193,14 @@ def test_ai_scope_draft_failure_shows_extractive_fallback_warning(tmp_path, monk
     pdf = make_pdf(tmp_path / "drawing.pdf", [(["Install valve V-101."], (0, 0, 0))])
     jm = JobManager(str(tmp_path / "jobs"))
     jm.add_job_files("101", str(pdf))
-    monkeypatch.setattr(ai_review, "is_enabled", lambda: True)
+    monkeypatch.setattr(ai_review, "is_configured", lambda: True)
 
     def fail(*args, **kwargs):
         raise ai_review.AIError("provider unavailable")
 
     monkeypatch.setattr(ai_review, "draft_scope_with_ai", fail)
-    draft = create_scope_draft(jm, "101", jm.get_pid_files("101")[0], {"materials": []})
-    assert draft["generation_method"] == "extractive"
-    assert "provider unavailable" in draft["generation_warning"]
-    assert "possible work note" in draft["text"]
+    with pytest.raises(ai_review.AIError, match="provider unavailable"):
+        create_scope_draft(jm, "101", jm.get_pid_files("101")[0], {"materials": []})
 
 
 def test_scope_ai_formatter_rejects_all_untraceable_tasks():

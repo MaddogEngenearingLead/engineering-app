@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -10,6 +11,11 @@ from app.config import settings
 from app.main import app
 
 client = TestClient(app)
+
+
+@pytest.fixture(autouse=True)
+def _required_ai(required_ai):
+    pass
 
 
 @pytest.fixture(autouse=True)
@@ -30,6 +36,36 @@ def test_scan_completed(freetext_pdf):
     assert body["status"] == "completed"
     assert body["demo_pages"] == [2] and body["new_work_pages"] == [3]
     assert os.path.exists(body["bom_pdf"])
+
+
+def test_scan_uses_ollama_when_primary_ai_is_unconfigured(freetext_pdf, monkeypatch):
+    from app.services import ai_review
+
+    class LocalFallback:
+        name, model = "ollama", "qwen3-vl:4b"
+
+    def missing_provider():
+        raise ai_review.AIError("No API key set.")
+
+    monkeypatch.setattr(ai_review, "get_provider", missing_provider)
+    monkeypatch.setattr(ai_review, "OllamaProvider", LocalFallback)
+    response = _post(freetext_pdf, scope_of_work="Replace TK-1")
+    assert response.status_code == 200
+    assert response.json()["status"] == "completed"
+
+
+def test_scan_removes_exports_when_required_ai_review_fails(freetext_pdf, monkeypatch):
+    from app.services import ai_review
+
+    def fail(*_args, **_kwargs):
+        raise ai_review.AIError("AI providers unavailable")
+
+    monkeypatch.setattr(ai_review, "review_with_ai", fail)
+    response = _post(freetext_pdf, scope_of_work="Replace TK-1")
+
+    assert response.status_code == 503
+    assert "Required AI review failed" in response.json()["detail"]
+    assert not list((Path(settings.upload_dir) / "scan_exports").iterdir())
 
 
 def test_clarify_and_resubmit(ambiguous_pdf):

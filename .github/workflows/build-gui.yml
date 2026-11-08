@@ -68,9 +68,13 @@ jobs:
           OCR_PREFIX: ${{ steps.ocr-env.outputs.environment-path }}
           OCR_CACHE: ${{ runner.temp }}/micromamba/pkgs
         run: python scripts/prepare_tesseract_bundle.py --prefix "$OCR_PREFIX" --cache "$OCR_CACHE" --output "$RUNNER_TEMP/tesseract-bundle"
+      - name: Prepare Ollama runtime bundle
+        shell: bash
+        run: python scripts/prepare_ollama_bundle.py --output "$RUNNER_TEMP/ollama-bundle"
       - run: python build_exe.py
         env:
           TESSERACT_BUNDLE_DIR: ${{ runner.temp }}/tesseract-bundle
+          OLLAMA_BUNDLE_DIR: ${{ runner.temp }}/ollama-bundle/ollama-runtime
       - name: Remove build-time OCR environment from its original location
         shell: python
         env:
@@ -84,19 +88,32 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $p = Start-Process dist/JobManager.exe -ArgumentList "--selftest-require-bundled-ocr" -Wait -PassThru
+          $p = Start-Process dist/JobManager/JobManager.exe -ArgumentList "--selftest-require-bundled-ocr", "--selftest-require-bundled-ollama" -Wait -PassThru
           if ($p.ExitCode -ne 0) { throw "Selftest failed with exit code $($p.ExitCode)" }
+      - name: Zip Windows app folder
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          python - <<'PY'
+          import zipfile
+          from pathlib import Path
+          root = Path("dist/JobManager")
+          with zipfile.ZipFile("dist/JobManager-windows.zip", "w", zipfile.ZIP_DEFLATED, compresslevel=1) as archive:
+              for path in root.rglob("*"):
+                  if path.is_file():
+                      archive.write(path, path.relative_to(root).as_posix())
+          PY
       - name: Selftest packaged app (macOS)
         if: runner.os == 'macOS'
-        run: dist/JobManager.app/Contents/MacOS/JobManager --selftest-require-bundled-ocr
+        run: dist/JobManager.app/Contents/MacOS/JobManager --selftest-require-bundled-ocr --selftest-require-bundled-ollama
       - name: Zip macOS app
         if: runner.os == 'macOS'
-        run: cd dist && zip -r JobManager-macos.zip JobManager.app
+        run: cd dist && zip -ry JobManager-macos.zip JobManager.app
       - name: Upload Windows release asset
         if: github.ref_type == 'tag' && runner.os == 'Windows'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "${{ github.ref_name }}" dist/JobManager.exe --repo "${{ github.repository }}" --clobber
+        run: gh release upload "${{ github.ref_name }}" dist/JobManager-windows.zip --repo "${{ github.repository }}" --clobber
       - name: Upload macOS release asset
         if: github.ref_type == 'tag' && runner.os == 'macOS'
         env:
@@ -107,7 +124,7 @@ jobs:
         with:
           name: JobManager-${{ runner.os }}
           path: |
-            dist/JobManager.exe
+            dist/JobManager-windows.zip
             dist/JobManager-macos.zip
 
   release:

@@ -18,6 +18,12 @@ python -m pip install pyinstaller tkinterdnd2==0.4.2
 if (-not $SkipInstaller) {
     powershell -ExecutionPolicy Bypass -File (Join-Path $repoRoot "installer\build-installer.ps1") -InnoCompilerPath $InnoCompilerPath
 } else {
+    $ollamaBundle = Join-Path $repoRoot "build\ollama-bundle"
+    python scripts/prepare_ollama_bundle.py --output $ollamaBundle
+    if ($LASTEXITCODE -ne 0) {
+        throw "Ollama runtime preparation failed with exit code $LASTEXITCODE"
+    }
+    $env:OLLAMA_BUNDLE_DIR = Join-Path $ollamaBundle "ollama-runtime"
     python build_exe.py
-    Write-Host "Skipped installer build. Executable is at dist\JobManager.exe" -ForegroundColor Yellow
+    Write-Host "Skipped installer build. Application is at dist\JobManager" -ForegroundColor Yellow
 }

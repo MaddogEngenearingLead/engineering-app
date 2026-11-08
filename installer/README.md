@@ -21,12 +21,17 @@ This project includes a Windows installer script that:
 From the repository root:
 
 ```powershell
+python scripts/prepare_ollama_bundle.py --output build/ollama-bundle
+$env:OLLAMA_BUNDLE_DIR = (Resolve-Path build/ollama-bundle/ollama-runtime).Path
 python build_exe.py
 ```
 
 This creates:
 
-- `dist/JobManager.exe`
+- `dist/JobManager/JobManager.exe` and its supporting runtime files
+
+The helper downloads the pinned Ollama release, verifies its published SHA-256,
+and extracts it for the folder-based app build.
 
 ## Build the installer
 
@@ -40,7 +45,7 @@ Output installer is generated in `installer\Output\` as:
 ## What the installer does
 
 - Installs to `C:\Program Files\Engineering App` (default)
-- Installs the single-file `JobManager.exe`; PyInstaller bundles the runtime and dependencies
+- Installs the complete `dist/JobManager` application folder, including its bundled Ollama runtime
 - Creates Start Menu shortcut
 - Creates desktop shortcut (default task)
 - Adds "Launch Engineering App" checkbox on completion

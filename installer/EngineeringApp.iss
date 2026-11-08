@@ -1,8 +1,8 @@
 ; Inno Setup script for Engineering App (Windows)
-; Requires dist/JobManager.exe built via: python build_exe.py
+; Requires dist/JobManager built via: python build_exe.py
 
 #define MyAppName "Engineering App"
-#define MyAppVersion "1.0.0"
+#define MyAppVersion "0.1.28"
 #define MyAppPublisher "MaddogSTD"
 #define MyAppExeName "JobManager.exe"
 
@@ -29,7 +29,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupDescription: "Additional icons:"; Flags: checkedonce
 
 [Files]
-Source: "..\dist\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\dist\JobManager\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{autoprograms}\Engineering App"; Filename: "{app}\{#MyAppExeName}"

@@ -1,6 +1,6 @@
 """Build a standalone Job Manager app for the current OS: python build_exe.py (requires pyinstaller).
 
-PyInstaller cannot cross-compile, so run this on Windows (-> dist/JobManager.exe)
+PyInstaller cannot cross-compile, so run this on Windows (-> dist/JobManager/JobManager.exe)
 or macOS (-> dist/JobManager.app) or use the "Build GUI" GitHub Actions workflow.
 
 The BOM scan runs inside the app, so the PDF/BOM libraries are bundled too.
@@ -37,8 +37,15 @@ if bundle_dir:
     ):
         raise SystemExit("TESSERACT_BUNDLE_DIR must contain tesseract, tessdata/eng.traineddata and tessdata/pdf.ttf.")
     args += ["--add-data", f"{root}{os.pathsep}tesseract"]
-# --onefile with --windowed is deprecated on macOS, which builds a .app bundle instead
-if sys.platform != "darwin":
+# Keep the large Ollama runtime in the app folder so it is not extracted to a
+# temporary directory on every Windows app launch.
+ollama_dir = os.environ.get("OLLAMA_BUNDLE_DIR")
+if ollama_dir:
+    runtime = Path(ollama_dir).expanduser().resolve()
+    if not runtime.is_dir():
+        raise SystemExit("OLLAMA_BUNDLE_DIR must point to the verified Ollama runtime directory.")
+    args += ["--add-data", f"{runtime}{os.pathsep}ollama-runtime"]
+if sys.platform not in ("darwin", "win32"):
     args.append("--onefile")
 
 PyInstaller.__main__.run(args)

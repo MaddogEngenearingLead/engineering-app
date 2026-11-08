@@ -2,10 +2,11 @@
 
 A desktop app that reads a P&ID drawing (PDF), compares it with a scope-of-work
 document, and produces a bill of materials (BOM) containing only what the scope
-calls for. By default, drawings and scope documents are processed locally; there
-are no accounts or login. The app contacts GitHub to check for updates. Optional
-AI review is off by default and, when enabled, sends drawing pages, the scope,
-and the scanned BOM to the selected AI provider.
+calls for. Drawing processing and OCR run locally, and there are no app accounts
+or login. Every scan uses AI: the configured provider is tried first, with bundled
+local Ollama used only if that provider is unavailable or fails. Ollama starts
+automatically and downloads its vision model on first launch. The app also contacts
+GitHub to check for updates.
 
 ## How it works
 
@@ -81,17 +82,22 @@ test data only.
 
 Download the latest release from the repository's **Releases** page:
 
-- **Windows:** `JobManager.exe` (single file, no Python needed).
+- **Windows:** `JobManager-windows.zip` (unzip the folder and run `JobManager.exe`; no Python needed).
 - **macOS:** `JobManager-macos.zip` (unzip and open `JobManager.app`).
 
-**Portable use (USB drive, Windows):** run `JobManager.exe` from the drive and jobs are saved in a
+**Portable use (USB drive, Windows):** unzip the full app folder onto the drive and run `JobManager.exe`;
+jobs are saved in a
 `Jobs` folder next to it, so they travel with the program. On a normal hard drive, create an empty
 `Jobs` folder beside the exe to get the same behaviour; otherwise jobs live in
 `%LOCALAPPDATA%\EngineeringApp\uploads`. Existing jobs are not moved automatically; copy that
 folder's contents into `Jobs` if you want them on the drive.
 
 Updates: the app checks for a new version at launch and can update itself
-(**Check for updates**). Releases are built automatically by GitHub Actions
+(**Check for updates**). Windows releases are folders distributed as ZIP files so the bundled Ollama runtime is not
+re-extracted on every launch. The app can overlay updates in place while preserving user files.
+Windows installations from v0.1.27 and earlier must manually download and extract this ZIP
+for the first update; their updater looks for the former single-file executable.
+Releases are built automatically by GitHub Actions
 (`.github/workflows/build-gui.yml`) when a `v*` tag is pushed. An optional Windows
 installer is described in [`installer/README.md`](installer/README.md).
 
@@ -114,8 +120,11 @@ python -m pytest tests -q        # run the tests
 python run_gui.py --selftest     # headless scan + review-save check (used by CI)
 ```
 
-Build the standalone app on the target OS: `pip install pyinstaller && python build_exe.py`
-(`dist/JobManager.exe` on Windows, `dist/JobManager.app` on macOS).
+Build the app on the target OS after preparing Ollama with
+`python scripts/prepare_ollama_bundle.py --output build/ollama-bundle` and setting
+`OLLAMA_BUNDLE_DIR` to `build/ollama-bundle/ollama-runtime`; then run
+`pip install pyinstaller && python build_exe.py`
+(`dist/JobManager/JobManager.exe` on Windows, `dist/JobManager.app` on macOS).
 
 ## Repository layout
 
@@ -200,10 +209,10 @@ not verify size, rating, quantity, responsibility or whether work is in scope:
 all printed rows remain in the master list for review. Unstated quantities are
 left blank instead of assumed to be one.
 
-## Optional AI review
+## AI review and local fallback
 
 Open **Help** on the dashboard for setup instructions, examples and troubleshooting.
-Click **AI settings** on the dashboard, enable AI, select Google Gemini, ChatGPT (OpenAI API),
+Before scanning, click **AI settings** on the dashboard and select Google Gemini, ChatGPT (OpenAI API),
 Anthropic Claude, xAI Grok, Groq, Mistral AI, OpenRouter, Together AI, or an
 OpenAI-compatible provider, and enter that provider's API key and a vision-capable
 model. Grok, Groq, Mistral, OpenRouter and Together require an explicit model ID
@@ -211,17 +220,18 @@ that supports image input and the OpenAI chat-completions image format. For a cu
 compatible provider, also supply its HTTPS
 API base URL (typically ending in `/v1`); the service must support image inputs.
 The settings window explains each field and links to the selected provider's
-API-key page and model catalog.
+API-key page and model catalog. A key is optional: if the selected provider has no working
+configuration, the app uses local Ollama instead.
 ChatGPT uses an OpenAI API key and API billing; a ChatGPT subscription does not
 include API access.
 Available models, costs and image limits depend on the provider. Not every AI
 service supports this protocol. Provider keys are stored separately in the local
-settings file as plaintext. When enabled, drawing pages, scope, and BOM data are sent to the
-selected provider. When no scope is supplied, the app may also send extracted
-drawing text, BOM rows and its heuristic review index to prepare a phased,
+settings file as plaintext. If the selected cloud provider is unavailable or fails,
+the app automatically switches to local Ollama. When no scope is supplied, the app sends
+extracted drawing text, BOM rows and its review index to prepare a phased,
 source-cited scope draft. Review
 and approve all generated scope language before use; matching evidence references
 do not establish authorization or prove a complete takeoff. AI's missing/unneeded
 item suggestions change nothing until you approve them.
 
-If OCR identifies a BOM page but cannot reconstruct its table, enabled AI also receives overlapping images of that page and attempts a transcription before clarification is requested. If OCR is unavailable, image-only pages are sent for the same attempt. Its rows appear in the generated draft BOM as **unverified**; review every row, quantity, unit, scope and completeness against the drawing. If AI cannot provide usable rows, clarification is still required. The provider is pluggable (`PROVIDERS` in `app/services/ai_review.py`). Settings are stored in `%LOCALAPPDATA%\EngineeringApp\ai_settings.json` on Windows, or under `$XDG_CONFIG_HOME/EngineeringApp/` (default `~/.config/EngineeringApp/`) on macOS and Linux.
+Ollama is bundled with the Windows and macOS apps and starts in the background when the app launches. On first start it downloads `qwen3-vl:4b` (about 3.3 GB) into the app's local data folder; allow disk space and internet access for this one-time download. A configured cloud provider remains primary; Ollama is used only if it is missing or fails. If OCR identifies a BOM page but cannot reconstruct its table, AI also receives overlapping images of that page and attempts a transcription before clarification is requested. If OCR is unavailable, image-only pages are sent for the same attempt. AI-transcribed rows are **unverified**; check every row, quantity, unit, scope and completeness against the drawing. Settings are stored in `%LOCALAPPDATA%\EngineeringApp\ai_settings.json` on Windows, or under `$XDG_CONFIG_HOME/EngineeringApp/` (default `~/.config/EngineeringApp/`) on macOS and Linux.
