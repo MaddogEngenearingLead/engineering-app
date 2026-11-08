@@ -3,12 +3,15 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
 from pathlib import Path
 
 import pdfplumber
 
 from app.job_manager import JobManager
+
+logger = logging.getLogger(__name__)
 
 
 def summarize_scope(text: str) -> list[str]:
@@ -60,6 +63,140 @@ _WORK_NOTE = re.compile(
     r"\b(?:install\w*|remov\w*|demol\w*|replac\w*|fabricat\w*|"
     r"provid\w*|furnish\w*|relocat\w*|modif\w*|repair\w*|"
     r"connect\w*|test\w*|commission\w*|new work)\b", re.I)
+_WORK_EVIDENCE = re.compile(
+    r"\b(?:install\w*|remov\w*|demol\w*|replac\w*|fabricat\w*|provid\w*|furnish\w*|"
+    r"relocat\w*|modif\w*|repair\w*|upgrad\w*|connect\w*|test\w*|inspect\w*|"
+    r"examin\w*|commission\w*|contractor|shall|must|required|existing|retain\w*|reuse|new work|"
+    r"material test|weld map|wps|pqr|excavat\w*|hydrovac|soft dig|one.?call|"
+    r"call before|utility|contaminat\w*|roll.?off|scrap|vacuum truck|grout|"
+    r"lock.?out|loto|drain.?down|"
+    r"concrete|support|coating|paint\w*|radiograph\w*|magnetic particle|"
+    r"hydrostatic|pressure test|electrical|instrumentation|housekeep\w*|restore|turnover)\b", re.I)
+
+
+def _drawing_evidence(pdf_path: Path) -> tuple[str, set[str], list[tuple[int, str]]]:
+    """Collect work-related drawing text with PDF page references for AI review."""
+    pages = []
+    notes = []
+    with pdfplumber.open(pdf_path) as pdf:
+        for page_no, page in enumerate(pdf.pages, 1):
+            page_text = page.extract_text() or ""
+            if not _WORK_EVIDENCE.search(page_text):
+                continue
+            lines = [re.sub(r"\s+", " ", line).strip() for line in page_text.splitlines()]
+            selected = []
+            for index, line in enumerate(lines):
+                if not line or not _WORK_EVIDENCE.search(line):
+                    continue
+                start, end = max(0, index - 1), min(len(lines), index + 2)
+                selected.extend(lines[start:end])
+            excerpt = " ".join(dict.fromkeys(selected))
+            excerpt = excerpt[:3500]
+            if excerpt:
+                pages.append((page_no, excerpt))
+            for line in lines:
+                if 12 <= len(line) <= 400 and _WORK_NOTE.search(line):
+                    notes.append((page_no, line))
+    # Keep context bounded while retaining evidence from the whole drawing set.
+    chosen = []
+    chosen_pages = set()
+    char_count = 0
+    for page_no, excerpt in pages:
+        block = f"P{page_no}: {excerpt}"
+        if char_count + len(block) > 40000:
+            continue
+        chosen.append(block)
+        chosen_pages.add(f"P{page_no}")
+        char_count += len(block)
+    evidence = "\n".join(chosen) or "(No work-related drawing text was extracted.)"
+    return evidence, chosen_pages, notes
+
+
+def _drawing_notes(pdf_path: Path, page_numbers: list[int]) -> list[tuple[int, str]]:
+    notes = []
+    with pdfplumber.open(pdf_path) as pdf:
+        pages = page_numbers or list(range(1, len(pdf.pages) + 1))
+        for page_no in pages:
+            if not 1 <= page_no <= len(pdf.pages):
+                continue
+            for raw in (pdf.pages[page_no - 1].extract_text() or "").splitlines():
+                note = re.sub(r"\s+", " ", raw).strip()
+                if 12 <= len(note) <= 400 and _WORK_NOTE.search(note):
+                    notes.append((page_no, note))
+    return notes
+
+
+def _bom_evidence(materials: list[dict]) -> tuple[str, set[str], dict[str, str]]:
+    rows = []
+    ids = set()
+    labels = {}
+    for material in materials:
+        tag = str(material.get("tag_id") or "-").strip()
+        description = str(material.get("description") or "").strip()
+        if not description:
+            continue
+        origin = material.get("origin")
+        page_ref = material.get("page") or material.get("pages") or ""
+        if origin in ("drawing_bom", "drawing_bom_ai") and tag != "-":
+            source_id = f"{'AI-BOM' if origin == 'drawing_bom_ai' else 'BOM'}-{tag}"
+            ids.add(source_id)
+            page_text = f", drawing page {page_ref}" if str(page_ref).isdigit() else ""
+            row_label = "AI-transcribed BOM" if origin == "drawing_bom_ai" else "BOM"
+            labels[source_id] = f"{row_label} item {tag}{page_text}"
+        else:
+            pages = material.get("pages") or material.get("page") or ""
+            source_id = f"P{pages}" if str(pages).isdigit() else "P&ID candidate"
+            if source_id.startswith("P") and source_id[1:].isdigit():
+                ids.add(source_id)
+        quantity = material.get("quantity")
+        unit = str(material.get("unit") or "").strip()
+        qty_text = f"; quantity: {quantity} {unit}".rstrip() if quantity is not None else ""
+        location = (f" | drawing page {page_ref}" if origin in ("drawing_bom", "drawing_bom_ai")
+                    and str(page_ref).isdigit() else "")
+        rows.append(f"{source_id} | {tag} | {description}{qty_text}{location}")
+    return "\n".join(rows) or "(No BOM or material rows were extracted.)", ids, labels
+
+
+def _format_ai_scope(reply: dict, valid_sources: set[str], source_labels: dict[str, str] | None = None) -> str:
+    sections = reply.get("sections")
+    if not isinstance(sections, list):
+        raise ValueError("AI returned an invalid scope structure.")
+    lines = ["Draft Scope of Work (AI-assisted; review and approve before use)."]
+    task_count = 0
+    for section in sections[:12]:
+        if not isinstance(section, dict):
+            continue
+        title = section.get("title")
+        tasks = section.get("tasks")
+        if not isinstance(title, str) or not title.strip() or len(title) > 140 or not isinstance(tasks, list):
+            continue
+        section_lines = []
+        for task in tasks[:50]:
+            if not isinstance(task, dict):
+                continue
+            text = task.get("text")
+            sources = task.get("sources")
+            if not isinstance(text, str) or not text.strip() or len(text) > 800 or not isinstance(sources, list):
+                continue
+            source_ids = list(dict.fromkeys(source for source in sources
+                                           if isinstance(source, str) and source in valid_sources))
+            if not source_ids:
+                continue
+            references = []
+            for source in source_ids:
+                if source.startswith("AI-BOM-"):
+                    references.append((source_labels or {}).get(source, f"AI-transcribed BOM item {source[7:]}"))
+                elif source.startswith("BOM-"):
+                    references.append((source_labels or {}).get(source, f"BOM item {source[4:]}"))
+                else:
+                    references.append(f"drawing page {source[1:]}")
+            section_lines.append(f"- {text.strip()} [VERIFY] [Sources: {'; '.join(references)}]")
+            task_count += 1
+        if section_lines:
+            lines.extend(["", title.strip(), *section_lines])
+    if not task_count:
+        raise ValueError("AI returned no tasks with traceable drawing or BOM references.")
+    return "\n".join(lines)
 
 
 def _note_refers_to_item(note: str, material: dict) -> bool:
@@ -80,15 +217,17 @@ def create_scope_draft(jm: JobManager, job_number: str, pid_path: Path, result: 
     """Save evidence for review, never as an approved scope file."""
     if jm.get_scope_files(job_number):
         raise ValueError("A scope file already exists; it will not be replaced.")
-    notes = []
-    with pdfplumber.open(pid_path) as pdf:
-        pages = sorted(set(result.get("demo_pages", []) + result.get("new_work_pages", [])))
-        pages = pages or list(range(1, len(pdf.pages) + 1))
-        for page_no in pages:
-            for raw in (pdf.pages[page_no - 1].extract_text() or "").splitlines():
-                note = re.sub(r"\s+", " ", raw).strip()
-                if 12 <= len(note) <= 400 and _WORK_NOTE.search(note):
-                    notes.append((page_no, note))
+    from app.services import ai_review
+
+    ai_enabled = ai_review.is_enabled()
+    if ai_enabled:
+        drawing_evidence, page_sources, notes = _drawing_evidence(pid_path)
+    else:
+        drawing_evidence, page_sources = "", set()
+        notes = _drawing_notes(pid_path, result.get("demo_pages", []) + result.get("new_work_pages", []))
+    review_pages = set(result.get("demo_pages", []) + result.get("new_work_pages", []))
+    if review_pages:
+        notes = [(page, note) for page, note in notes if page in review_pages]
     lines = []
     used_notes = set()
     for material in result.get("materials", []):
@@ -123,13 +262,27 @@ def create_scope_draft(jm: JobManager, job_number: str, pid_path: Path, result: 
             lines.append(f"- Drawing page {page}, possible work note (item association unconfirmed): {note}")
     if not lines:
         lines.append("- No reliable work instructions were extracted. Define the scope from the P&ID.")
+    text = "\n".join(lines)
+    draft_info = {"generation_method": "extractive"}
+    if ai_enabled:
+        try:
+            bom_evidence, bom_sources, bom_labels = _bom_evidence(result.get("materials", []))
+            ai_draft = ai_review.draft_scope_with_ai(drawing_evidence, bom_evidence, review_index=text)
+            text = _format_ai_scope(ai_draft, page_sources | bom_sources, bom_labels)
+            draft_info = {"generation_method": "ai",
+                          "ai_provider": ai_draft["provider"], "ai_model": ai_draft["model"]}
+        except (ai_review.AIError, ValueError) as exc:
+            logger.warning("AI scope drafting failed; using extractive draft: %s", exc)
+            draft_info["generation_warning"] = (
+                f"AI scope drafting could not be completed ({exc}). The extractive evidence draft is shown instead.")
     draft = {
         "pid_file": str(pid_path.resolve()),
         "pid_sha256": _digest(pid_path),
         "primary_pid_file": str(jm.get_pid_files(job_number)[0].resolve()),
-        "text": "\n".join(lines),
+        "text": text,
         "demo_pages": result.get("demo_pages", []),
         "new_work_pages": result.get("new_work_pages", []),
+        **draft_info,
     }
     _draft_path(jm, job_number).write_text(json.dumps(draft, indent=2), encoding="utf-8")
     return draft

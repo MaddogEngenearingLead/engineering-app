@@ -63,6 +63,25 @@ def test_openai_protocol_includes_images(monkeypatch, provider, expected_url):
     assert provider.generate("prompt", [b"image"]) == '{"ok": true}'
 
 
+def test_ai_scope_draft_requests_text_only_grounded_output():
+    class FakeProvider:
+        name = "gemini"
+        model = "test-model"
+
+        def generate(self, prompt, images):
+            assert images == []
+            assert "BOM rows are a material reference list" in prompt
+            assert "AI-BOM-12" in prompt and "EXTRACTIVE REVIEW INDEX" in prompt
+            return ('{"sections":[{"title":"Phase 1","tasks":[{"text":"Install item",'
+                    '"sources":["P3","BOM-12"],"verify":true}]}]}')
+
+    draft = ai_review.draft_scope_with_ai("P3: Install item.", "AI-BOM-12 | 12 | valve",
+                                          review_index="- Candidate task (verify).",
+                                          provider=FakeProvider())
+    assert draft["provider"] == "gemini" and draft["model"] == "test-model"
+    assert draft["sections"][0]["tasks"][0]["sources"] == ["P3", "BOM-12"]
+
+
 def test_anthropic_protocol_includes_images(monkeypatch):
     def request(url, body, headers):
         assert url == "https://api.anthropic.com/v1/messages" and headers["x-api-key"] == "test"

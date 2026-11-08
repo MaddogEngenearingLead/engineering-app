@@ -217,7 +217,11 @@ include API access.
 Available models, costs and image limits depend on the provider. Not every AI
 service supports this protocol. Provider keys are stored separately in the local
 settings file as plaintext. When enabled, drawing pages, scope, and BOM data are sent to the
-selected provider; AI's missing/unneeded item suggestions change nothing until
-you approve them.
+selected provider. When no scope is supplied, the app may also send extracted
+drawing text, BOM rows and its heuristic review index to prepare a phased,
+source-cited scope draft. Review
+and approve all generated scope language before use; matching evidence references
+do not establish authorization or prove a complete takeoff. AI's missing/unneeded
+item suggestions change nothing until you approve them.
 
 If OCR identifies a BOM page but cannot reconstruct its table, enabled AI also receives overlapping images of that page and attempts a transcription before clarification is requested. If OCR is unavailable, image-only pages are sent for the same attempt. Its rows appear in the generated draft BOM as **unverified**; review every row, quantity, unit, scope and completeness against the drawing. If AI cannot provide usable rows, clarification is still required. The provider is pluggable (`PROVIDERS` in `app/services/ai_review.py`). Settings are stored in `%LOCALAPPDATA%\EngineeringApp\ai_settings.json` on Windows, or under `$XDG_CONFIG_HOME/EngineeringApp/` (default `~/.config/EngineeringApp/`) on macOS and Linux.

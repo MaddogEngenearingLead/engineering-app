@@ -354,9 +354,17 @@ class JobManagerApp(TkinterDnD.Tk):
         dialog.job_number_for_delete = job_number
         dialog.title(f"Review proposed scope - Job #{job_number}")
         dialog.geometry("800x600")
-        tk.Label(dialog, text="Edit and approve the scope before it is saved. Drawing notes and listed "
-                 "items are evidence, not proof of authorized work; verify against the P&ID.",
+        scope_notice = ("This is an extractive evidence list, not an authored scope. "
+                        "Reorganize and confirm the intended work against the project documents."
+                        if draft.get("generation_method") == "extractive" else
+                        "Edit and approve the scope before it is saved. Drawing notes and listed "
+                        "items are evidence, not proof of authorized work; verify each statement and reference "
+                        "against the full drawing package and project requirements.")
+        tk.Label(dialog, text=scope_notice,
                  wraplength=760, justify="left").pack(fill="x", padx=12, pady=10)
+        if draft.get("generation_warning"):
+            tk.Label(dialog, text=draft["generation_warning"], fg="#9a4d00",
+                     wraplength=760, justify="left").pack(fill="x", padx=12, pady=(0, 6))
         text = tk.Text(dialog, wrap="word")
         text.pack(fill="both", expand=True, padx=12, pady=5)
         text.insert("1.0", draft["text"])

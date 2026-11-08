@@ -36,7 +36,10 @@ HELP_SECTIONS = {
         "1. Select Start a New Job, enter a job number and add a P&ID PDF. "
         "Add a scope file when one is available.\n\n"
         "2. Run the scan. If no scope is supplied, review and approve the proposed "
-        "scope before it is saved; check each item against the drawing.\n\n"
+        "scope before it is saved; check each item against the drawing. When AI "
+        "review is enabled, the draft may be grouped into work phases and will "
+        "include drawing-page/BOM references. AI-generated text is still a draft "
+        "and must be checked and approved.\n\n"
         "3. Open the BOM review. Resolve questions and use Show on drawing to see "
         "the referenced page or highlighted location. Page-only issues open the "
         "whole page when precise coordinates are unavailable.\n\n"
@@ -64,7 +67,9 @@ HELP_SECTIONS = {
         "For an OpenAI-compatible service, obtain its HTTPS API base URL and a "
         "model ID supporting image input from that service's documentation.\n\n"
         "Providers can charge for API use. When AI is enabled, drawing pages, scope "
-        "and BOM data are sent to the chosen provider. AI suggestions are "
+        "and BOM data are sent to the chosen provider. If no scope is supplied, "
+        "extracted drawing text, BOM rows and a heuristic review index may also "
+        "be sent to draft a phased scope with source references. AI suggestions are "
         "unverified and need review. Keys are stored in local settings, not encrypted."
     ),
     "Troubleshooting": (
@@ -77,6 +82,8 @@ HELP_SECTIONS = {
         "access. A web chat login is not necessarily an API key. Check the service's "
         "documentation if a model or endpoint changes.\n\n"
         "Missing or uncertain quantities remain blank or flagged for review; do not "
-        "assume a quantity or that a matched material is in scope."
+        "assume a quantity or that a matched material is in scope. Without enabled "
+        "AI, the app provides an extractive evidence draft instead of an authored "
+        "construction narrative."
     ),
 }

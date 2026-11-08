@@ -105,6 +105,90 @@ def test_scope_draft_links_explicit_identifiers_but_does_not_invent_work(tmp_pat
     assert any("item association unconfirmed" in row and "Provide insulation" in row for row in rows)
 
 
+def test_ai_scope_draft_groups_tasks_and_keeps_only_valid_evidence(tmp_path, monkeypatch):
+    from app.services import ai_review
+    from app.services.scope_work import _format_ai_scope, create_scope_draft
+    from tests.conftest import make_pdf
+
+    pdf = make_pdf(tmp_path / "drawing.pdf", [
+        (["CONTRACTOR TO INSTALL NEW VALVE V-101.", "REMOVE EXISTING LINE."], (0, 0, 0)),
+    ])
+    jm = JobManager(str(tmp_path / "jobs"))
+    jm.add_job_files("101", str(pdf))
+    result = {"new_work_pages": [1], "materials": [
+        {"tag_id": "11", "description": "12 inch flange", "quantity": None,
+         "origin": "drawing_bom", "unit": "", "page": 4},
+    ]}
+    monkeypatch.setattr(ai_review, "is_enabled", lambda: True)
+    def fake_draft(drawing, bom, review_index=""):
+        assert "P1:" in drawing
+        assert "BOM-11 | 11 | 12 inch flange | drawing page 4" in bom
+        assert "Confirm intended work" in review_index
+        return {
+        "provider": "gemini", "model": "test-model", "sections": [
+            {"title": "Phase 1: Mechanical work", "tasks": [
+                {"text": "Install V-101.", "sources": ["P1"], "verify": False},
+                {"text": "Install all 12 inch flanges.", "sources": ["BOM-11"], "verify": True},
+                {"text": "Invented task.", "sources": ["P999"], "verify": False},
+            ]},
+        ],
+        }
+    monkeypatch.setattr(ai_review, "draft_scope_with_ai", fake_draft)
+    draft = create_scope_draft(jm, "101", jm.get_pid_files("101")[0], result)
+    assert draft["generation_method"] == "ai"
+    assert draft["ai_provider"] == "gemini"
+    assert "Phase 1: Mechanical work" in draft["text"]
+    assert "drawing page 1" in draft["text"]
+    assert "BOM item 11, drawing page 4" in draft["text"]
+    assert "P999" not in draft["text"] and "Invented task" not in draft["text"]
+    assert "[VERIFY]" in draft["text"]
+
+
+def test_ai_scope_draft_failure_shows_extractive_fallback_warning(tmp_path, monkeypatch):
+    from app.services import ai_review
+    from app.services.scope_work import create_scope_draft
+    from tests.conftest import make_pdf
+
+    pdf = make_pdf(tmp_path / "drawing.pdf", [(["Install valve V-101."], (0, 0, 0))])
+    jm = JobManager(str(tmp_path / "jobs"))
+    jm.add_job_files("101", str(pdf))
+    monkeypatch.setattr(ai_review, "is_enabled", lambda: True)
+
+    def fail(*args, **kwargs):
+        raise ai_review.AIError("provider unavailable")
+
+    monkeypatch.setattr(ai_review, "draft_scope_with_ai", fail)
+    draft = create_scope_draft(jm, "101", jm.get_pid_files("101")[0], {"materials": []})
+    assert draft["generation_method"] == "extractive"
+    assert "provider unavailable" in draft["generation_warning"]
+    assert "possible work note" in draft["text"]
+
+
+def test_scope_ai_formatter_rejects_all_untraceable_tasks():
+    from app.services.scope_work import _format_ai_scope
+
+    with pytest.raises(ValueError, match="traceable"):
+        _format_ai_scope({"sections": [
+            {"title": "Phase 1", "tasks": [
+                {"text": "Unsupported task.", "sources": ["BOM-999"], "verify": True}
+            ]}
+        ]}, {"P1"})
+
+
+def test_ai_bom_evidence_preserves_unstated_quantity_and_marks_transcription():
+    from app.services.scope_work import _bom_evidence
+
+    text, sources, labels = _bom_evidence([
+        {"tag_id": "12", "description": "Flange", "origin": "drawing_bom", "page": 4, "quantity": None},
+        {"tag_id": "13", "description": "Valve", "origin": "drawing_bom_ai", "page": 5, "quantity": 2},
+    ])
+    assert "BOM-12 | 12 | Flange | drawing page 4" in text
+    assert "AI-BOM-13 | 13 | Valve; quantity: 2 | drawing page 5" in text
+    assert "quantity: None" not in text
+    assert sources == {"BOM-12", "AI-BOM-13"}
+    assert labels["AI-BOM-13"] == "AI-transcribed BOM item 13, drawing page 5"
+
+
 def test_job_scope_api_review(freetext_pdf, tmp_path, monkeypatch):
     from fastapi.testclient import TestClient
     from app.api import routes
