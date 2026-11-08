@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 import threading
+import io
+import urllib.error
+
+import pytest
 
 from app.services import ollama_runtime
 
@@ -40,3 +44,78 @@ def test_ollama_chat_sends_images_and_json_mode(monkeypatch):
     assert seen["path"] == "/api/chat"
     assert message["images"] == ["aW1hZ2U="]
     assert seen["payload"]["format"] == "json" and seen["payload"]["stream"] is False
+
+
+def test_http_error_includes_ollama_detail_and_diagnostic_code(monkeypatch):
+    def fail(request, timeout):
+        raise urllib.error.HTTPError(request.full_url, 400, "Bad Request", {},
+                                     io.BytesIO(b'{"error":"model does not support images"}'))
+
+    monkeypatch.setattr(ollama_runtime.urllib.request, "urlopen", fail)
+    with pytest.raises(ollama_runtime.OllamaHTTPError, match="model does not support images") as error:
+        ollama_runtime._request("/api/chat", {"model": "test"})
+    assert error.value.status == 400
+    assert error.value.path == "/api/chat"
+    assert error.value.category == "image_or_vision"
+
+
+def test_http_error_without_json_keeps_status(monkeypatch):
+    def fail(request, timeout):
+        raise urllib.error.HTTPError(request.full_url, 400, "Bad Request", {}, io.BytesIO(b"not json"))
+
+    monkeypatch.setattr(ollama_runtime.urllib.request, "urlopen", fail)
+    with pytest.raises(ollama_runtime.OllamaHTTPError, match="HTTP 400"):
+        ollama_runtime._request("/api/chat", {})
+
+
+def test_server_check_requires_ollama_version(monkeypatch):
+    monkeypatch.setattr(ollama_runtime, "_request", lambda *args, **kwargs: {})
+    with pytest.raises(RuntimeError, match="did not return an Ollama version"):
+        ollama_runtime._check_server()
+    monkeypatch.setattr(ollama_runtime, "_request", lambda *args, **kwargs: {"version": "0.40.15"})
+    ollama_runtime._check_server()
+
+
+def test_server_starts_with_fixed_loopback_port(monkeypatch, tmp_path):
+    seen = {}
+    checks = iter([False, True])
+
+    def check():
+        if not next(checks):
+            raise RuntimeError("offline")
+
+    class Process:
+        def poll(self):
+            return None
+
+    def start(args, **kwargs):
+        seen.update(args=args, env=kwargs["env"])
+        return Process()
+
+    monkeypatch.setattr(ollama_runtime, "_check_server", check)
+    monkeypatch.setattr(ollama_runtime, "ollama_executable", lambda: str(tmp_path / "ollama"))
+    monkeypatch.setattr(ollama_runtime, "_data_dir", lambda: tmp_path / "data")
+    monkeypatch.setattr(ollama_runtime.subprocess, "Popen", start)
+    monkeypatch.setattr(ollama_runtime, "_PROCESS", None)
+    ollama_runtime.ensure_server()
+    assert seen["args"] == [str(tmp_path / "ollama"), "serve"]
+    assert seen["env"]["OLLAMA_HOST"] == "127.0.0.1:11434"
+    assert seen["env"]["OLLAMA_MODELS"] == str(tmp_path / "data" / "models")
+
+
+def test_model_preparation_checks_download_status(monkeypatch):
+    calls = []
+    monkeypatch.setattr(ollama_runtime, "ensure_server", lambda: None)
+
+    def request(path, payload=None, timeout=10):
+        calls.append((path, payload))
+        return {"models": []} if path == "/api/tags" else {"status": "success"}
+
+    monkeypatch.setattr(ollama_runtime, "_request", request)
+    ollama_runtime.ensure_model()
+    assert calls == [("/api/tags", None), ("/api/pull", {"name": ollama_runtime.OLLAMA_MODEL, "stream": False})]
+    monkeypatch.setattr(ollama_runtime, "_request",
+                        lambda path, payload=None, **kwargs:
+                        {"models": []} if path == "/api/tags" else {"error": "failed"})
+    with pytest.raises(RuntimeError, match="did not confirm"):
+        ollama_runtime.ensure_model()

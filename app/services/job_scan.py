@@ -223,6 +223,25 @@ def _run_ai(result: dict, pid_path: str, scope_text: str, materials: list[dict])
     return f"AI review: {review['summary']}" if review["summary"] else "AI review done."
 
 
+def _scan_failure(jm: JobManager, job_number: str, stage: str, exc: Exception) -> dict:
+    from app.services.diagnostics import write_failure_report
+
+    report_path = None
+    message = str(exc)
+    try:
+        report_path = write_failure_report(jm.base_dir / "diagnostics", job_number, stage, exc)
+    except OSError as report_exc:
+        logger.exception("Could not save the failure report")
+        message += f"\nCould not save the debug report: {report_exc}"
+    if jm.get_job_dirs(job_number)[0]:
+        try:
+            _store(jm, job_number, {"bom_status": "error", "bom_message": str(exc)})
+        except Exception:
+            logger.exception("Could not save scan failure status")
+    return {"status": "error", "message": message,
+            "diagnostic_path": str(report_path) if report_path else None}
+
+
 def run_job_scan(jm: JobManager, job_number: str, demo_pages: list[int] | None = None,
                  new_work_pages: list[int] | None = None) -> dict:
     """Scan the job's P&ID against its scope and generate the BOM.
@@ -230,17 +249,18 @@ def run_job_scan(jm: JobManager, job_number: str, demo_pages: list[int] | None =
     Returns a dict with ``status`` of ``completed``, ``needs_clarification`` or
     ``error`` (plus ``message``). Never raises.
     """
+    stage = "loading_job"
     try:
         from app.services import ai_review
 
         job_dir, _, _ = jm.get_job_dirs(job_number)
         if not job_dir:
-            return {"status": "error", "message": f"Job {job_number} not found."}
+            raise ValueError(f"Job {job_number} not found.")
 
         pid_files = jm.get_pid_files(job_number)
         scope_files = jm.get_scope_files(job_number)
         if not pid_files:
-            return {"status": "error", "message": "No P&ID file found for this job."}
+            raise ValueError("No P&ID file found for this job.")
         pid_path = pid_files[0]
         ai_review.require_provider()
 
@@ -249,8 +269,7 @@ def run_job_scan(jm: JobManager, job_number: str, demo_pages: list[int] | None =
         if scope_files:
             scope_text = FileDetector().extract_text_from_file(scope_files[0]) or ""
             if not scope_text:
-                return {"status": "error",
-                        "message": f"Could not read any text from scope file {scope_files[0].name}."}
+                raise ValueError(f"Could not read any text from scope file {scope_files[0].name}.")
 
         _store(jm, job_number, {"bom_status": "running"})
 
@@ -260,16 +279,18 @@ def run_job_scan(jm: JobManager, job_number: str, demo_pages: list[int] | None =
 
         output_dir = job_dir / "bom_exports"
         job_id = job_export_id(job_number)
-        with staged_job_exports(str(output_dir)) as stage:
+        with staged_job_exports(str(output_dir)) as stage_dir:
+            stage = "building_bom"
             result = build_scoped_bom(
                 str(pid_path), scope_text=scope_text, demo_pages=demo_pages,
                 new_work_pages=new_work_pages, job_id=job_id, source_file=pid_path.name,
-                output_dir=str(stage),
+                output_dir=str(stage_dir),
             )
 
             if result.get("status") not in ("completed", "needs_clarification"):
                 raise ValueError(result.get("message") or "BOM scan failed")
             materials = result.get("materials") or []
+            stage = "ai_review"
             ai_note = _run_ai(result, str(pid_path), scope_text, materials)
             if result.get("status") == "needs_clarification":
                 questions = result.get("questions") or []
@@ -280,6 +301,7 @@ def run_job_scan(jm: JobManager, job_number: str, demo_pages: list[int] | None =
                 return {"status": "needs_clarification", "message": message}
 
             if not scope_files:
+                stage = "scope_drafting"
                 draft = create_scope_draft(jm, job_number, pid_path, result)
                 _store(jm, job_number, {"bom_status": "needs_scope_review",
                                         "bom_message": "Review the proposed scope before continuing."})
@@ -288,6 +310,7 @@ def run_job_scan(jm: JobManager, job_number: str, demo_pages: list[int] | None =
 
             # Validate the initial scan even when replaying answers requires re-export.
             previous = load_completed_review(jm, job_number) or {}
+            stage = "publishing_exports"
             with pid_path.open("rb") as source:
                 pid_sha256 = hashlib.file_digest(source, "sha256").hexdigest()
             if previous.get("pid_sha256") == pid_sha256:
@@ -303,7 +326,7 @@ def run_job_scan(jm: JobManager, job_number: str, demo_pages: list[int] | None =
                 notes = [q["message"] for q in questions
                          if q["severity"] in ("warning", "review") and q["id"] not in answers and q["message"]]
                 result.update(export_all(job_id, pid_path.name, materials, result.get("scope_text", ""),
-                                         notes, result.get("detected_assets", []), str(stage),
+                                         notes, result.get("detected_assets", []), str(stage_dir),
                                          list(previous.get("clarifications", [])) + record_lines(answers)))
             def commit(paths):
                 result.update(paths)
@@ -315,17 +338,14 @@ def run_job_scan(jm: JobManager, job_number: str, demo_pages: list[int] | None =
                     "bom_status": "completed", "bom_message": None, **paths,
                     "bom_generated_at": datetime.now().isoformat(), "bom_item_count": len(materials),
                 }, clear_clarification=True)
-            publish_job_exports(job_id, stage, result, str(output_dir), commit=commit)
+            publish_job_exports(job_id, stage_dir, result, str(output_dir), commit=commit)
         warning = _cleanup_warning(job_id, output_dir, result)
         if warning:
-            _store(jm, job_number, {"bom_status": "error", "bom_message": warning})
-            return {"status": "error", "message": warning, "result": result}
+            failure = _scan_failure(jm, job_number, "cleanup_exports", ValueError(warning))
+            failure["result"] = result
+            return failure
         return {"status": "completed", "message": "BOM generated." + (f" {ai_note}" if ai_note else ""),
                 "ai_note": ai_note, "result": result}
     except Exception as exc:  # keep the GUI alive
         logger.exception("BOM scan failed for %s", job_number)
-        try:
-            _store(jm, job_number, {"bom_status": "error", "bom_message": str(exc)})
-        except Exception:
-            pass
-        return {"status": "error", "message": str(exc)}
+        return _scan_failure(jm, job_number, stage, exc)

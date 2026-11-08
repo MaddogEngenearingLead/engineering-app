@@ -90,6 +90,61 @@ def test_scan_ai_failure_prevents_completion(freetext_pdf, tmp_path, monkeypatch
     assert not (jm.get_job_dirs("101")[0] / "bom_exports" / "review.json").exists()
 
 
+def test_failure_report_preserves_ai_codes_without_sensitive_error_text(freetext_pdf, tmp_path, monkeypatch):
+    from app.services import ai_review, ollama_runtime
+
+    jm = JobManager(str(tmp_path / "jobs"))
+    jm.add_job_files("26-114", str(freetext_pdf))
+    jm.save_scope_file("26-114", "scope.txt", b"secret scope wording")
+
+    def fail(*args, **kwargs):
+        try:
+            raise ollama_runtime.OllamaHTTPError("/api/chat", 400, "image rejected SECRET-API-KEY")
+        except ollama_runtime.OllamaHTTPError as local:
+            raise ai_review.AIError(
+                "provider error SECRET-API-KEY secret scope wording",
+                failures=[{"provider": "gemini", "http_status": 503}]) from local
+
+    monkeypatch.setattr(ai_review, "review_with_ai", fail)
+    outcome = run_job_scan(jm, "26-114")
+
+    assert outcome["status"] == "error"
+    path = Path(outcome["diagnostic_path"])
+    text = path.read_text()
+    report = json.loads(text)
+    assert path.parent == jm.base_dir / "diagnostics"
+    assert report["job_number"] == "26-114"
+    assert report["stage"] == "ai_review"
+    assert report["provider_failures"] == [
+        {"provider": "gemini", "http_status": 503},
+        {"provider": "ollama", "http_status": 400, "endpoint": "/api/chat",
+         "category": "image_or_vision", "model": ollama_runtime.OLLAMA_MODEL},
+    ]
+    assert "SECRET-API-KEY" not in text and "secret scope wording" not in text
+    assert str(tmp_path) not in text
+
+
+def test_report_write_failure_is_visible(freetext_pdf, tmp_path, monkeypatch):
+    from app.services import ai_review, diagnostics
+
+    jm = JobManager(str(tmp_path / "jobs"))
+    jm.add_job_files("101", str(freetext_pdf))
+    jm.save_scope_file("101", "scope.txt", b"Install TK-1.")
+
+    def fail(*args, **kwargs):
+        raise ai_review.AIError("provider unavailable")
+
+    def no_report(*args, **kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(ai_review, "review_with_ai", fail)
+    monkeypatch.setattr(diagnostics, "write_failure_report", no_report)
+    outcome = run_job_scan(jm, "101")
+    assert "provider unavailable" in outcome["message"]
+    assert "Could not save the debug report: disk full" in outcome["message"]
+    assert outcome["diagnostic_path"] is None
+
+
 def test_reject_stale_draft_and_existing_scope(freetext_pdf, tmp_path):
     jm = JobManager(str(tmp_path / "jobs"))
     jm.add_job_files("101", str(freetext_pdf))

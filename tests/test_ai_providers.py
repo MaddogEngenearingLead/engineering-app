@@ -141,6 +141,33 @@ def test_ai_reports_both_primary_and_local_fallback_failures(monkeypatch):
         ai_review.review_with_ai("drawing.pdf", "Install valve.", [])
 
 
+def test_ai_failure_report_retains_http_codes_and_request_sizes(monkeypatch, tmp_path):
+    import json
+    from app.services import diagnostics, ollama_runtime
+
+    class Primary:
+        name, model = "gemini", "cloud-model"
+
+        def generate(self, prompt, images):
+            raise ai_review.AIError("remote error", failures=[{"provider": "gemini", "http_status": 503}])
+
+    def local_chat(model, prompt, images):
+        raise ollama_runtime.OllamaHTTPError("/api/chat", 400, "image rejected: confidential")
+
+    monkeypatch.setattr(ai_review, "get_provider", lambda: Primary())
+    monkeypatch.setattr(ollama_runtime, "chat", local_chat)
+    with pytest.raises(ai_review.AIError) as error:
+        ai_review._generate_reply("confidential text", [b"private image"])
+    report = json.loads(diagnostics.write_failure_report(tmp_path, "26-114", "ai_review", error.value).read_text())
+    assert report["provider_failures"] == [
+        {"provider": "gemini", "http_status": 503},
+        {"provider": "ollama", "image_count": 1, "prompt_characters": 17},
+        {"provider": "ollama", "http_status": 400, "endpoint": "/api/chat",
+         "category": "image_or_vision", "model": ollama_runtime.OLLAMA_MODEL},
+    ]
+    assert "confidential" not in json.dumps(report)
+
+
 def test_anthropic_protocol_includes_images(monkeypatch):
     def request(url, body, headers):
         assert url == "https://api.anthropic.com/v1/messages" and headers["x-api-key"] == "test"

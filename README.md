@@ -235,3 +235,15 @@ do not establish authorization or prove a complete takeoff. AI's missing/unneede
 item suggestions change nothing until you approve them.
 
 Ollama is bundled with the Windows and macOS apps and starts in the background when the app launches. On first start it downloads `qwen3-vl:4b` (about 3.3 GB) into the app's local data folder; allow disk space and internet access for this one-time download. A configured cloud provider remains primary; Ollama is used only if it is missing or fails. If OCR identifies a BOM page but cannot reconstruct its table, AI also receives overlapping images of that page and attempts a transcription before clarification is requested. If OCR is unavailable, image-only pages are sent for the same attempt. AI-transcribed rows are **unverified**; check every row, quantity, unit, scope and completeness against the drawing. Settings are stored in `%LOCALAPPDATA%\EngineeringApp\ai_settings.json` on Windows, or under `$XDG_CONFIG_HOME/EngineeringApp/` (default `~/.config/EngineeringApp/`) on macOS and Linux.
+
+The fallback connects to Ollama on `127.0.0.1:11434`, reusing an existing server
+or starting the bundled one. The first model download requires DNS and HTTPS
+access to Ollama's registry; if it fails, restore access and retry the scan. A
+running server without the downloaded model is not yet a ready fallback.
+
+When a desktop job scan fails, the app saves a JSON debug report under the jobs
+folder's `diagnostics` directory and offers to save a copy. Use **Open debug reports**
+on the dashboard to find reports later. Reports include the job number, app version,
+failure stage, exception types and provider error codes, but not exception messages,
+file paths, drawing or scope content, or API keys. Review a report before sharing it.
+Ollama's error details are displayed locally in the failure message, not in the report.

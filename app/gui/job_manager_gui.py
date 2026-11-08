@@ -10,13 +10,14 @@ finished BOM is linked next to the job.
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import sys
 import threading
 import tkinter as tk
 import webbrowser
 from pathlib import Path
-from tkinter import messagebox, simpledialog, ttk
+from tkinter import filedialog, messagebox, simpledialog, ttk
 
 from tkinterdnd2 import DND_FILES, TkinterDnD
 
@@ -210,6 +211,7 @@ class JobManagerApp(TkinterDnD.Tk):
                   relief="groove").pack(side="right", padx=(0, 6))
         tk.Button(header, text="Check for updates", command=self.check_updates_manually,
                   relief="groove").pack(side="right")
+        tk.Button(self.body, text="Open debug reports", command=self.open_debug_reports).pack(anchor="e")
         tk.Button(self.body, text="+ Start a New Job", command=self.open_new_job_window,
                   width=20, bg="#2196F3", fg="white").pack(pady=10)
         tk.Label(self.body, text="Your Jobs (click a job to generate its BOM):",
@@ -424,7 +426,33 @@ class JobManagerApp(TkinterDnD.Tk):
             self.review_scope(job_number)
             return
         title = "BOM needs review" if status == "needs_clarification" else "BOM failed"
-        messagebox.showwarning(title, f"Job {job_number}: {outcome.get('message')}")
+        report = outcome.get("diagnostic_path")
+        message = f"Job {job_number}: {outcome.get('message')}"
+        if report:
+            if messagebox.askyesno(title, message + "\n\nA debug report was saved. Save a copy to share?",
+                                   parent=self):
+                self.save_debug_report(Path(report))
+        else:
+            messagebox.showwarning(title, message)
+
+    def open_debug_reports(self):
+        directory = self.jobs.base_dir / "diagnostics"
+        try:
+            directory.mkdir(parents=True, exist_ok=True)
+            open_path(str(directory.resolve()))
+        except OSError as exc:
+            messagebox.showerror("Debug reports", f"Could not open debug reports: {exc}", parent=self)
+
+    def save_debug_report(self, source: Path):
+        target = filedialog.asksaveasfilename(
+            parent=self, title="Save debug report", initialfile=source.name,
+            defaultextension=".json", filetypes=[("JSON report", "*.json")])
+        if target:
+            try:
+                if Path(target).resolve() != source.resolve():
+                    shutil.copyfile(source, target)
+            except OSError as exc:
+                messagebox.showerror("Debug reports", f"Could not save debug report: {exc}", parent=self)
 
     def open_new_job_window(self, job_number: str = "", files: dict | None = None):
         NewJobWindow(self, job_number=job_number, files=files)

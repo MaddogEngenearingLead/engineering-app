@@ -40,10 +40,16 @@ def selftest(require_bundled_ocr: bool = False, require_bundled_ollama: bool = F
         binary, _ = _tesseract()
         assert binary and Path(binary).is_relative_to(bundle), "bundled OCR executable missing"
 
-        image = Image.new("RGB", (900, 180), "white")
-        ImageDraw.Draw(image).text((30, 30), "BILL OF MATERIALS", font=ImageFont.load_default(size=48), fill="black")
+        image = Image.new("RGB", (1600, 320), "white")
+        draw = ImageDraw.Draw(image)
+        font = ImageFont.load_default(size=48)
+        draw.text((30, 20), "BILL OF MATERIALS", font=font, fill="black")
+        draw.text((30, 100), "MD601-0 M-601-0", font=font, fill="black")
+        draw.text((30, 180), "ITEM DESCRIPTION QTY", font=font, fill="black")
         text, _, _, _ = _searchable_page(image, 150)
         assert "MATERIALS" in text.upper(), "bundled OCR failed"
+        assert "MD601-0" in text.upper() and "M-601-0" in text.upper(), \
+            "bundled OCR did not read the sample drawing identifiers"
         print("SELFTEST bundled OCR ok")
     d = Path(tempfile.mkdtemp())
     c = canvas.Canvas(str(d / "pid.pdf"))

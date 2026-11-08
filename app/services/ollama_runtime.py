@@ -25,6 +25,27 @@ _PROCESS: subprocess.Popen | None = None
 _PREPARING = False
 
 
+class OllamaHTTPError(RuntimeError):
+    def __init__(self, path: str, status: int, detail: str):
+        self.path = path
+        self.status = status
+        self.category = _error_category(detail)
+        super().__init__(f"Ollama {path} returned HTTP {status}" + (f": {detail}" if detail else "."))
+
+
+def _error_category(detail: str) -> str:
+    text = detail.lower()
+    if "memory" in text or "out of memory" in text:
+        return "memory"
+    if "context" in text:
+        return "context"
+    if "vision" in text or "image" in text:
+        return "image_or_vision"
+    if "model" in text:
+        return "model"
+    return "other"
+
+
 def _data_dir() -> Path:
     if sys.platform.startswith("win"):
         root = os.environ.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
@@ -61,6 +82,15 @@ def _request(path: str, payload: dict | None = None, timeout: float = 10) -> dic
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             result = json.loads(response.read())
+    except urllib.error.HTTPError as exc:
+        try:
+            body = json.loads(exc.read(8192))
+            detail = body.get("error", "") if isinstance(body, dict) else ""
+            if not isinstance(detail, str):
+                detail = ""
+        except (OSError, ValueError):
+            detail = ""
+        raise OllamaHTTPError(path, exc.code, " ".join(detail.split())[:500]) from exc
     except (OSError, TimeoutError, urllib.error.URLError, ValueError) as exc:
         raise RuntimeError(f"Ollama request failed: {exc}") from exc
     if not isinstance(result, dict):
@@ -88,7 +118,7 @@ def ensure_server(timeout: float = 60) -> None:
     global _PROCESS
     with _LOCK:
         try:
-            _request("/api/version")
+            _check_server()
             return
         except RuntimeError:
             pass
@@ -108,24 +138,37 @@ def ensure_server(timeout: float = 60) -> None:
             raise RuntimeError(f"Could not start Ollama: {exc}") from exc
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
-            if _PROCESS.poll() is not None:
-                raise RuntimeError("The Ollama server stopped during startup.")
             try:
-                _request("/api/version")
+                _check_server()
                 return
             except RuntimeError:
+                if _PROCESS.poll() is not None:
+                    raise RuntimeError("The Ollama server stopped during startup; "
+                                       "port 11434 may be occupied or unavailable.")
                 time.sleep(0.5)
+        if _PROCESS.poll() is None:
+            _PROCESS.terminate()
         raise RuntimeError("Timed out waiting for the local Ollama server.")
+
+
+def _check_server() -> None:
+    response = _request("/api/version")
+    if not isinstance(response.get("version"), str) or not response["version"].strip():
+        raise RuntimeError("The service on port 11434 did not return an Ollama version.")
 
 
 def ensure_model() -> None:
     with _MODEL_LOCK:
         ensure_server()
         tags = _request("/api/tags", timeout=30).get("models", [])
+        if not isinstance(tags, list):
+            raise RuntimeError("Ollama returned an invalid model list.")
         if any(model.get("name") == OLLAMA_MODEL or model.get("model") == OLLAMA_MODEL
                for model in tags if isinstance(model, dict)):
             return
-        _request("/api/pull", {"name": OLLAMA_MODEL, "stream": False}, timeout=3600)
+        result = _request("/api/pull", {"name": OLLAMA_MODEL, "stream": False}, timeout=3600)
+        if result.get("status") != "success":
+            raise RuntimeError("Ollama did not confirm the vision model download succeeded.")
 
 
 def prepare_local_fallback() -> None:

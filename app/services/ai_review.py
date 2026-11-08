@@ -29,7 +29,9 @@ MAX_PIXELS = 2600  # longest side of a rendered page
 
 
 class AIError(Exception):
-    pass
+    def __init__(self, message: str, *, failures: list[dict] | None = None):
+        super().__init__(message)
+        self.failures = failures or []
 
 
 # ---------------------------------------------------------------- settings
@@ -133,7 +135,7 @@ class GeminiProvider(Provider):
                 if exc.code in (429, 500, 503) and attempt < 2:
                     time.sleep(5 * (attempt + 1))
                     continue
-                raise AIError(last) from None
+                raise AIError(last, failures=[{"provider": "gemini", "http_status": exc.code}]) from None
             except (urllib.error.URLError, TimeoutError, OSError) as exc:
                 raise AIError(f"Could not reach Gemini: {getattr(exc, 'reason', exc)}") from None
         try:
@@ -163,7 +165,8 @@ def _json_request(url: str, body: dict, headers: dict) -> dict:
         with urllib.request.build_opener(_NoRedirect()).open(request, timeout=240) as response:
             data = json.loads(response.read())
     except urllib.error.HTTPError as exc:
-        raise AIError(f"AI service returned HTTP {exc.code}.") from None
+        raise AIError(f"AI service returned HTTP {exc.code}.",
+                      failures=[{"provider": "remote", "http_status": exc.code}]) from None
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
         raise AIError(f"Could not reach AI service: {getattr(exc, 'reason', exc)}") from None
     except ValueError:
@@ -340,9 +343,16 @@ def _generate_reply(prompt: str, images: list[bytes],
     try:
         return parse_reply(fallback.generate(prompt, images)), fallback
     except AIError as exc:
+        failures = [{"provider": "ollama", "image_count": len(images),
+                     "prompt_characters": len(prompt)}]
         if primary_error:
-            raise AIError(f"Primary AI failed ({primary_error}); {exc}") from exc
-        raise
+            primary_failures = list(primary_error.failures)
+            if not primary_failures:
+                primary_failures.append({"provider": primary.name if primary else "unconfigured",
+                                         "error_type": type(primary_error).__name__})
+            raise AIError(f"Primary AI failed ({primary_error}); {exc}",
+                          failures=primary_failures + failures) from exc
+        raise AIError(str(exc), failures=failures) from exc
 
 
 # ---------------------------------------------------------------- review
