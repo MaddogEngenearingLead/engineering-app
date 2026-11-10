@@ -112,7 +112,7 @@ def test_failure_report_preserves_ai_codes_without_sensitive_error_text(freetext
     path = Path(outcome["diagnostic_path"])
     text = path.read_text()
     report = json.loads(text)
-    assert path.parent == jm.base_dir / "diagnostics"
+    assert path.parent == jm.base_dir.resolve().parent / "error"
     assert report["job_number"] == "26-114"
     assert report["stage"] == "ai_review"
     assert report["provider_failures"] == [
@@ -122,6 +122,26 @@ def test_failure_report_preserves_ai_codes_without_sensitive_error_text(freetext
     ]
     assert "SECRET-API-KEY" not in text and "secret scope wording" not in text
     assert str(tmp_path) not in text
+
+
+def test_failure_report_keeps_older_reports_in_place(freetext_pdf, tmp_path, monkeypatch):
+    from app.services import ai_review
+
+    jm = JobManager(str(tmp_path / "Jobs"))
+    jm.add_job_files("101", str(freetext_pdf))
+    jm.save_scope_file("101", "scope.txt", b"Install TK-1.")
+    old_dir = jm.base_dir / "diagnostics"
+    old_dir.mkdir()
+    old = old_dir / "earlier.json"
+    old.write_text("{}")
+
+    def fail(*args, **kwargs):
+        raise ai_review.AIError("provider unavailable")
+
+    monkeypatch.setattr(ai_review, "review_with_ai", fail)
+    outcome = run_job_scan(jm, "101")
+    assert Path(outcome["diagnostic_path"]).parent == tmp_path / "error"
+    assert old.read_text() == "{}"
 
 
 def test_report_write_failure_is_visible(freetext_pdf, tmp_path, monkeypatch):

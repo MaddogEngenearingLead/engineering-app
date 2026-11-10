@@ -246,9 +246,13 @@ or starting the bundled one. The first model download requires DNS and HTTPS
 access to Ollama's registry; if it fails, restore access and retry the scan. A
 running server without the downloaded model is not yet a ready fallback.
 
-When a desktop job scan fails, the app saves a JSON debug report under the jobs
-folder's `diagnostics` directory and offers to save a copy. Use **Open debug reports**
+When a desktop job scan fails, the app saves a JSON debug report in an `error`
+folder beside the jobs folder and offers to save a copy. Earlier reports remain
+in the jobs folder's `diagnostics` directory. Use **Open debug reports**
 on the dashboard to find reports later. Reports include the job number, app version,
 failure stage, exception types and provider error codes, but not exception messages,
 file paths, drawing or scope content, or API keys. Review a report before sharing it.
 Ollama's error details are displayed locally in the failure message, not in the report.
+When the primary provider fails, Ollama reviews drawing pages individually to
+reduce vision context usage; page-level results are unverified and may lack
+cross-page context, so check the complete drawing set.

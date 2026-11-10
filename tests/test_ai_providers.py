@@ -103,6 +103,106 @@ def test_ai_uses_local_ollama_only_after_primary_provider_fails(monkeypatch):
     assert result["summary"] == "Local review."
 
 
+def test_local_fallback_reviews_all_12_pages_with_original_page_numbers(monkeypatch):
+    seen = []
+
+    class Primary:
+        name, model = "primary", "cloud"
+
+        def generate(self, prompt, images):
+            assert len(images) == 12
+            raise ai_review.AIError("provider unavailable")
+
+    class Local:
+        name, model = "ollama", "qwen3-vl:4b"
+
+        def generate(self, prompt, images):
+            page = len(seen) + 1
+            assert images == [f"page-{page}".encode()]
+            assert f"image is page {page} of the original 12-page" in prompt
+            assert "do not conclude that an item is absent" in prompt
+            seen.append(page)
+            return ('{"key_page": %s, "summary": "reviewed", "missing": '
+                    '[{"tag": "V-%s", "description": "valve", "quantity": 1, "page": %s}], '
+                    '"not_needed": []}' % (page if page == 4 else "null", page, page))
+
+    monkeypatch.setattr(ai_review, "get_provider", lambda: Primary())
+    monkeypatch.setattr(ai_review, "OllamaProvider", Local)
+    monkeypatch.setattr(ai_review, "render_pages", lambda path: [f"page-{i}".encode() for i in range(1, 13)])
+
+    result = ai_review.review_with_ai("drawing.pdf", "Install valve.", [])
+
+    assert seen == list(range(1, 13))
+    assert result["provider"] == "ollama"
+    assert result["key_page"] == 4
+    assert "pages separately" in result["summary"]
+    items = result["flags"][0]["items"]
+    assert [(item["tag"], item["pages"]) for item in items] == [
+        (f"V-{i}", [i]) for i in range(1, 13)]
+
+
+def test_local_fallback_fails_if_any_page_fails(monkeypatch):
+    class Primary:
+        name, model = "primary", "cloud"
+
+        def generate(self, prompt, images):
+            raise ai_review.AIError("provider unavailable")
+
+    class Local:
+        name, model = "ollama", "qwen3-vl:4b"
+
+        def generate(self, prompt, images):
+            if images == [b"page-2"]:
+                raise ai_review.AIError("context exceeded")
+            return '{"key_page": null, "missing": [], "not_needed": []}'
+
+    monkeypatch.setattr(ai_review, "get_provider", lambda: Primary())
+    monkeypatch.setattr(ai_review, "OllamaProvider", Local)
+    monkeypatch.setattr(ai_review, "render_pages", lambda path: [b"page-1", b"page-2"])
+    with pytest.raises(ai_review.AIError, match="drawing page 2.*context exceeded"):
+        ai_review.review_with_ai("drawing.pdf", "", [])
+
+
+def test_local_fallback_rejects_malformed_page_and_outside_page_references(monkeypatch):
+    class Local:
+        name, model = "ollama", "qwen3-vl:4b"
+
+        def generate(self, prompt, images):
+            if images == [b"page-1"]:
+                return ('{"key_page": 2, "missing": [{"tag": "V-1", '
+                        '"description": "valve", "page": 2}], "not_needed": []}')
+            return '{"key_page": 2, "missing": [], "not_needed": []}'
+
+    def missing():
+        raise ai_review.AIError("No API key set")
+
+    monkeypatch.setattr(ai_review, "get_provider", missing)
+    monkeypatch.setattr(ai_review, "OllamaProvider", Local)
+    monkeypatch.setattr(ai_review, "render_pages", lambda path: [b"page-1", b"page-2"])
+    result = ai_review.review_with_ai("drawing.pdf", "", [])
+    assert result["key_page"] == 2
+    assert result["flags"][0]["items"][0]["pages"] == []
+
+    monkeypatch.setattr(Local, "generate", lambda self, prompt, images: '{"summary": "incomplete"}')
+    with pytest.raises(ai_review.AIError, match="invalid review for drawing page 1"):
+        ai_review.review_with_ai("drawing.pdf", "", [])
+
+
+def test_primary_review_is_not_split(monkeypatch):
+    class Primary:
+        name, model = "primary", "cloud"
+
+        def generate(self, prompt, images):
+            assert images == [b"page-1", b"page-2"]
+            return '{"key_page": 2, "summary": "full review", "missing": [], "not_needed": []}'
+
+    monkeypatch.setattr(ai_review, "get_provider", lambda: Primary())
+    monkeypatch.setattr(ai_review, "OllamaProvider", lambda: pytest.fail("fallback should not run"))
+    monkeypatch.setattr(ai_review, "render_pages", lambda path: [b"page-1", b"page-2"])
+    result = ai_review.review_with_ai("drawing.pdf", "", [])
+    assert result["summary"] == "full review" and result["key_page"] == 2
+
+
 def test_ai_uses_ollama_when_no_primary_provider_is_configured(monkeypatch):
     class Local:
         name, model = "ollama", "qwen3-vl:4b"

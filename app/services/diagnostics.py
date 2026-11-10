@@ -13,6 +13,11 @@ from app.services.ollama_runtime import OllamaHTTPError, OLLAMA_MODEL
 from app.version import __version__
 
 
+def error_directory(jobs_directory: Path) -> Path:
+    """Keep reports beside the jobs directory, including portable Jobs folders."""
+    return jobs_directory.resolve().parent / "error"
+
+
 def write_failure_report(directory: Path, job_number: str, stage: str, exc: Exception) -> Path:
     directory.mkdir(parents=True, exist_ok=True)
     failures = []

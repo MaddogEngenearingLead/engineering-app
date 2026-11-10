@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 
 OLLAMA_MODEL = "qwen3-vl:4b"
 OLLAMA_URL = "http://127.0.0.1:11434"
+OLLAMA_CONTEXT_LENGTH = 16384
 _LOCK = threading.RLock()
 _MODEL_LOCK = threading.Lock()
 _PROCESS: subprocess.Popen | None = None
@@ -106,6 +107,7 @@ def chat(model: str, prompt: str, images: list[bytes]) -> str:
                       "images": [base64.b64encode(image).decode("ascii") for image in images]}],
         "format": "json",
         "stream": False,
+        "options": {"num_ctx": OLLAMA_CONTEXT_LENGTH},
     }, timeout=900)
     message = reply.get("message")
     content = message.get("content") if isinstance(message, dict) else None

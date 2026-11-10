@@ -32,12 +32,12 @@ def test_save_debug_report_copies_only_report(monkeypatch, tmp_path):
 
 def test_open_debug_reports_uses_jobs_directory(monkeypatch, tmp_path):
     opened = []
-    app = SimpleNamespace(jobs=SimpleNamespace(base_dir=tmp_path))
+    app = SimpleNamespace(jobs=SimpleNamespace(base_dir=tmp_path / "Jobs"))
     monkeypatch.setattr(job_manager_gui, "open_path", opened.append)
 
     job_manager_gui.JobManagerApp.open_debug_reports(app)
 
-    assert opened == [str((tmp_path / "diagnostics").resolve())]
+    assert opened == [str((tmp_path / "error").resolve())]
     assert Path(opened[0]).is_dir()
 
 

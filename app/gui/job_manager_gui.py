@@ -456,7 +456,9 @@ class JobManagerApp(TkinterDnD.Tk):
             messagebox.showwarning(title, message)
 
     def open_debug_reports(self):
-        directory = self.jobs.base_dir / "diagnostics"
+        from app.services.diagnostics import error_directory
+
+        directory = error_directory(self.jobs.base_dir)
         try:
             directory.mkdir(parents=True, exist_ok=True)
             open_path(str(directory.resolve()))

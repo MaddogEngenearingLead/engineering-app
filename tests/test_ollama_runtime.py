@@ -62,6 +62,7 @@ def test_ollama_chat_sends_images_and_json_mode(monkeypatch):
     assert seen["path"] == "/api/chat"
     assert message["images"] == ["aW1hZ2U="]
     assert seen["payload"]["format"] == "json" and seen["payload"]["stream"] is False
+    assert seen["payload"]["options"]["num_ctx"] == 16384
 
 
 def test_http_error_includes_ollama_detail_and_diagnostic_code(monkeypatch):

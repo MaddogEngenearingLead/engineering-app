@@ -21,6 +21,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
+from typing import Callable
 
 logger = logging.getLogger(__name__)
 
@@ -323,7 +324,8 @@ def _has_primary_provider() -> bool:
 
 
 def _generate_reply(prompt: str, images: list[bytes],
-                    provider: Provider | None = None) -> tuple[dict, Provider]:
+                    provider: Provider | None = None,
+                    fallback_review: Callable[[Provider], dict] | None = None) -> tuple[dict, Provider]:
     if provider is not None:
         return parse_reply(provider.generate(prompt, images)), provider
 
@@ -341,7 +343,8 @@ def _generate_reply(prompt: str, images: list[bytes],
 
     fallback = OllamaProvider()
     try:
-        return parse_reply(fallback.generate(prompt, images)), fallback
+        reply = fallback_review(fallback) if fallback_review else parse_reply(fallback.generate(prompt, images))
+        return reply, fallback
     except AIError as exc:
         failures = [{"provider": "ollama", "image_count": len(images),
                      "prompt_characters": len(prompt)}]
@@ -626,7 +629,44 @@ def review_with_ai(pid_path: str, scope_text: str, materials: list[dict],
     if not images:
         raise AIError("The drawing has no pages to review.")
     prompt = PROMPT.format(scope=scope_text[:12000], bom=_bom_text(materials))
-    reply, provider = _generate_reply(prompt, images, provider)
+    def review_local_pages(local: Provider) -> dict:
+        if len(images) == 1:
+            return parse_reply(local.generate(prompt, images))
+        replies = []
+        for page_number, image in enumerate(images, 1):
+            page_instructions = (
+                f"The attached image is page {page_number} of the original {len(images)}-page P&ID set."
+            )
+            page_prompt = prompt.replace(
+                "The attached images are the pages of a P&ID drawing, in order (page 1 first).",
+                page_instructions,
+            )
+            page_prompt = (
+                f"{page_prompt}\n\nOnly one drawing image is attached. Use the original page "
+                "number in all page fields. Other pages are not visible. Report only findings "
+                "supported by this page or the scope; do not conclude that an item is absent "
+                "from the entire drawing set. Do not treat this partial review as complete."
+            )
+            try:
+                reply = parse_reply(local.generate(page_prompt, [image]))
+            except AIError as exc:
+                raise AIError(f"Local AI review failed on drawing page {page_number}: {exc}") from exc
+            if not isinstance(reply.get("missing"), list) or not isinstance(reply.get("not_needed"), list):
+                raise AIError(f"Local AI returned an invalid review for drawing page {page_number}.")
+            for item in reply["missing"]:
+                if isinstance(item, dict) and item.get("page") != page_number:
+                    item["page"] = None
+            if reply.get("key_page") != page_number:
+                reply["key_page"] = None
+            replies.append(reply)
+        return {
+            "key_page": next((reply["key_page"] for reply in replies if reply["key_page"]), None),
+            "summary": "Local AI reviewed pages separately; verify findings across the full drawing set.",
+            "missing": [item for reply in replies for item in reply["missing"]],
+            "not_needed": [item for reply in replies for item in reply["not_needed"]],
+        }
+
+    reply, provider = _generate_reply(prompt, images, provider, fallback_review=review_local_pages)
     key_page = reply.get("key_page")
     return {"flags": build_flags(reply, materials), "summary": str(reply.get("summary") or "")[:400],
             "key_page": key_page if isinstance(key_page, int) else None,

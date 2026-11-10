@@ -224,12 +224,12 @@ def _run_ai(result: dict, pid_path: str, scope_text: str, materials: list[dict])
 
 
 def _scan_failure(jm: JobManager, job_number: str, stage: str, exc: Exception) -> dict:
-    from app.services.diagnostics import write_failure_report
+    from app.services.diagnostics import error_directory, write_failure_report
 
     report_path = None
     message = str(exc)
     try:
-        report_path = write_failure_report(jm.base_dir / "diagnostics", job_number, stage, exc)
+        report_path = write_failure_report(error_directory(jm.base_dir), job_number, stage, exc)
     except OSError as report_exc:
         logger.exception("Could not save the failure report")
         message += f"\nCould not save the debug report: {report_exc}"
