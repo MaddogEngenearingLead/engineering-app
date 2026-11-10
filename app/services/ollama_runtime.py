@@ -34,6 +34,14 @@ class OllamaHTTPError(RuntimeError):
         super().__init__(f"Ollama {path} returned HTTP {status}" + (f": {detail}" if detail else "."))
 
 
+class OllamaResponseError(RuntimeError):
+    """Ollama answered but gave nothing usable; `code` is safe to include in reports."""
+
+    def __init__(self, code: str, message: str):
+        self.code = code
+        super().__init__(message)
+
+
 def _error_category(detail: str) -> str:
     text = detail.lower()
     if "memory" in text or "out of memory" in text:
@@ -99,21 +107,35 @@ def _request(path: str, payload: dict | None = None, timeout: float = 10) -> dic
     return result
 
 
-def chat(model: str, prompt: str, images: list[bytes]) -> str:
-    ensure_model()
-    reply = _request("/api/chat", {
+def _chat_once(model: str, prompt: str, images: list[bytes], json_mode: bool) -> str:
+    payload = {
         "model": model,
         "messages": [{"role": "user", "content": prompt,
                       "images": [base64.b64encode(image).decode("ascii") for image in images]}],
-        "format": "json",
         "stream": False,
+        "think": False,
         "options": {"num_ctx": OLLAMA_CONTEXT_LENGTH},
-    }, timeout=900)
+    }
+    if json_mode:
+        payload["format"] = "json"
+    reply = _request("/api/chat", payload, timeout=900)
     message = reply.get("message")
-    content = message.get("content") if isinstance(message, dict) else None
-    if not isinstance(content, str) or not content:
-        raise RuntimeError("Ollama returned no text answer.")
+    if not isinstance(message, dict):
+        raise OllamaResponseError("invalid_message", "Ollama returned no message.")
+    content = message.get("content")
+    if not isinstance(content, str) or not content.strip():
+        code = "thinking_only" if message.get("thinking") else "empty_content"
+        raise OllamaResponseError(code, "Ollama returned no text answer.")
     return content
+
+
+def chat(model: str, prompt: str, images: list[bytes]) -> str:
+    ensure_model()
+    # JSON mode can yield empty output on some vision models; retry once without it.
+    try:
+        return _chat_once(model, prompt, images, json_mode=True)
+    except OllamaResponseError:
+        return _chat_once(model, prompt, images, json_mode=False)
 
 
 def ensure_server(timeout: float = 60) -> None:

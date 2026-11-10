@@ -138,3 +138,30 @@ def test_model_preparation_checks_download_status(monkeypatch):
                         {"models": []} if path == "/api/tags" else {"error": "failed"})
     with pytest.raises(RuntimeError, match="did not confirm"):
         ollama_runtime.ensure_model()
+
+
+def test_chat_retries_without_json_mode_on_empty_content(monkeypatch):
+    from app.services import ollama_runtime as rt
+
+    calls = []
+
+    def fake_request(path, payload=None, timeout=10):
+        calls.append(payload)
+        content = "" if "format" in payload else '{"ok": true}'
+        return {"message": {"content": content}}
+
+    monkeypatch.setattr(rt, "ensure_model", lambda: None)
+    monkeypatch.setattr(rt, "_request", fake_request)
+    assert rt.chat("m", "p", []) == '{"ok": true}'
+    assert len(calls) == 2 and "format" not in calls[1]
+
+
+def test_chat_reports_response_error_code(monkeypatch):
+    import pytest
+    from app.services import ollama_runtime as rt
+
+    monkeypatch.setattr(rt, "ensure_model", lambda: None)
+    monkeypatch.setattr(rt, "_request", lambda *a, **k: {"message": {"content": "", "thinking": "x"}})
+    with pytest.raises(rt.OllamaResponseError) as info:
+        rt.chat("m", "p", [])
+    assert info.value.code == "thinking_only"

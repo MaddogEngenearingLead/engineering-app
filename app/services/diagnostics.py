@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from app.services.ai_review import AIError
-from app.services.ollama_runtime import OllamaHTTPError, OLLAMA_MODEL
+from app.services.ollama_runtime import OllamaHTTPError, OllamaResponseError, OLLAMA_MODEL
 from app.version import __version__
 
 
@@ -31,6 +31,9 @@ def write_failure_report(directory: Path, job_number: str, stage: str, exc: Exce
         if isinstance(current, OllamaHTTPError):
             failures.append({"provider": "ollama", "http_status": current.status,
                              "endpoint": current.path, "category": current.category,
+                             "model": OLLAMA_MODEL})
+        if isinstance(current, OllamaResponseError):
+            failures.append({"provider": "ollama", "response_error": current.code,
                              "model": OLLAMA_MODEL})
         frames.append({
             "exception_type": type(current).__name__,
