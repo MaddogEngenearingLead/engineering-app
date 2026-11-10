@@ -29,7 +29,8 @@ from app.services.job_scan import load_current_clarification, run_job_scan
 from app.services.review_questions import build_questions
 from app.services.scope_work import approve_scope_draft, load_scope_draft
 from app.services.updater import (
-    UpdateInfo, apply_update, can_self_update, check_for_update, check_for_update_status, download_update,
+    UpdateInfo, apply_update, can_self_update, check_for_update, check_for_update_status, cleanup_update,
+    download_update,
 )
 from app.version import __version__
 
@@ -184,6 +185,7 @@ class JobManagerApp(TkinterDnD.Tk):
 
         def work():
             previous = ""
+            path = None
 
             def progress(stage: str, completed: int, total: int | None):
                 nonlocal previous
@@ -200,6 +202,11 @@ class JobManagerApp(TkinterDnD.Tk):
                 apply_update(path, progress=progress)
             except Exception as exc:
                 message = str(exc) or type(exc).__name__
+                if path is not None:
+                    try:
+                        cleanup_update(path)
+                    except OSError as cleanup_exc:
+                        message += f"\nCould not remove temporary update files: {cleanup_exc}"
                 self.after(0, lambda message=message: self._update_failed(message))
                 return
             self.after(0, self.destroy)

@@ -7,11 +7,14 @@ from __future__ import annotations
 
 import os
 import re
+import shlex
+import shutil
 import stat
 import subprocess
 import sys
 import tempfile
 import zipfile
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
@@ -23,6 +26,7 @@ from app.version import __version__
 
 API = "https://api.github.com"
 Progress = Callable[[str, int, int | None], None]
+_UPDATE_MARKER = ".engineering-app-update"
 
 
 @dataclass
@@ -99,25 +103,51 @@ def can_self_update() -> bool:
 
 def download_update(info: UpdateInfo, dest_dir: Path | None = None,
                     progress: Progress | None = None) -> Path:
-    dest_dir = dest_dir or Path(tempfile.mkdtemp(prefix="jm_update_"))
+    owned = dest_dir is None
+    if owned:
+        dest_dir = Path(tempfile.mkdtemp(prefix="jm_update_"))
+        (dest_dir / _UPDATE_MARKER).write_text("Engineering App update\n", encoding="utf-8")
+    assert dest_dir is not None
     target = dest_dir / info.asset_name
-    with httpx.stream(
-        "GET", info.asset_url, headers=_headers("application/octet-stream"),
-        follow_redirects=True, timeout=120.0,
-    ) as resp:
-        resp.raise_for_status()
-        length = resp.headers.get("content-length", "")
-        total = int(length) if length.isdigit() else None
-        received = 0
-        if progress:
-            progress("Downloading", received, total)
-        with open(target, "wb") as fh:
-            for chunk in resp.iter_bytes():
-                fh.write(chunk)
-                received += len(chunk)
-                if progress:
-                    progress("Downloading", received, total)
+    try:
+        with httpx.stream(
+            "GET", info.asset_url, headers=_headers("application/octet-stream"),
+            follow_redirects=True, timeout=120.0,
+        ) as resp:
+            resp.raise_for_status()
+            length = resp.headers.get("content-length", "")
+            total = int(length) if length.isdigit() else None
+            received = 0
+            if progress:
+                progress("Downloading", received, total)
+            with open(target, "wb") as fh:
+                for chunk in resp.iter_bytes():
+                    fh.write(chunk)
+                    received += len(chunk)
+                    if progress:
+                        progress("Downloading", received, total)
+    except Exception:
+        if owned:
+            cleanup_update(target)
+        raise
     return target
+
+
+def _owned_update_dir(downloaded: Path) -> Path | None:
+    directory = downloaded.parent
+    if (directory.is_symlink() or not directory.name.startswith("jm_update_")
+            or directory.resolve().parent != Path(tempfile.gettempdir()).resolve()
+            or not (directory / _UPDATE_MARKER).is_file()
+            or (directory / _UPDATE_MARKER).is_symlink()):
+        return None
+    return directory
+
+
+def cleanup_update(downloaded: Path) -> None:
+    """Remove only a staging directory created and marked by this updater."""
+    directory = _owned_update_dir(downloaded)
+    if directory:
+        shutil.rmtree(directory)
 
 
 def _extract_update(downloaded: Path, destination: Path, progress: Progress | None = None) -> None:
@@ -178,9 +208,16 @@ def apply_update(downloaded: Path, progress: Progress | None = None) -> None:
             ) from exc
         extract_dir = downloaded.parent / "extracted"
         _extract_update(downloaded, extract_dir, progress)
-        if not (extract_dir / "JobManager.exe").is_file():
-            raise RuntimeError("The Windows update archive is missing JobManager.exe.")
+        if not (extract_dir / "JobManager.exe").is_file() or not (extract_dir / "_internal").is_dir():
+            raise RuntimeError("The Windows update archive is missing the app executable or runtime.")
+        if not (install_dir / "_internal").is_dir():
+            raise RuntimeError("The installed app runtime is missing; install the update manually.")
+        suffix = uuid.uuid4().hex
+        old_internal = install_dir / f"_internal-update-backup-{suffix}"
+        old_exe = install_dir / f"JobManager-update-backup-{suffix}.exe"
         script = downloaded.parent / "apply_update.bat"
+        owned_dir = _owned_update_dir(downloaded)
+        cleanup_staging = f'(goto) 2>nul & rmdir /S /Q "{owned_dir}"\r\n' if owned_dir else ""
         script.write_text(
             "@echo off\r\n"
             "title Engineering App update\r\n"
@@ -192,16 +229,40 @@ def apply_update(downloaded: Path, progress: Progress | None = None) -> None:
             "  goto wait\r\n"
             ")\r\n"
             "echo Installing the update. Please wait...\r\n"
-            f'robocopy "{extract_dir}" "{install_dir}" /E /COPY:DAT /R:2 /W:1 >nul\r\n'
-            "if errorlevel 8 (\r\n"
-            "  echo Update failed. Check folder permissions and available disk space.\r\n"
-            f'  echo The downloaded update is in: {downloaded.parent}\r\n'
-            "  pause\r\n"
-            "  exit /b 1\r\n"
-            ")\r\n"
+            f'move "{install_dir / "_internal"}" "{old_internal}" >nul\r\n'
+            "if errorlevel 1 goto failed\r\n"
+            f'move "{current}" "{old_exe}" >nul\r\n'
+            "if errorlevel 1 goto restore_internal\r\n"
+            f'robocopy "{extract_dir / "_internal"}" "{install_dir / "_internal"}" /E /COPY:DAT /R:2 /W:1 >nul\r\n'
+            "if errorlevel 8 goto restore_new_internal\r\n"
+            f'copy /Y "{extract_dir / "JobManager.exe"}" "{current}" >nul\r\n'
+            "if errorlevel 1 goto restore_new_internal\r\n"
+            f'rmdir /S /Q "{old_internal}"\r\n'
+            "if errorlevel 1 goto cleanup_failed\r\n"
+            f'del /Q "{old_exe}"\r\n'
+            "if errorlevel 1 goto cleanup_failed\r\n"
             f'start "" "{current}"\r\n'
-            "ping -n 3 127.0.0.1 >nul\r\n"
-            f'(goto) 2>nul & rmdir /S /Q "{downloaded.parent}"\r\n'
+            f"{cleanup_staging}"
+            "exit /b 0\r\n"
+            ":restore_new_internal\r\n"
+            f'if exist "{current}" del /Q "{current}"\r\n'
+            f'if exist "{install_dir / "_internal"}" rmdir /S /Q "{install_dir / "_internal"}"\r\n'
+            ":restore_exe\r\n"
+            f'move "{old_exe}" "{current}" >nul\r\n'
+            ":restore_internal\r\n"
+            f'move "{old_internal}" "{install_dir / "_internal"}" >nul\r\n'
+            ":failed\r\n"
+            "echo Update failed. Check folder permissions and disk space; the app may need manual repair.\r\n"
+            f'echo Update files: {downloaded.parent}\r\n'
+            f'echo Old app backups, if present: {old_internal} and {old_exe}\r\n'
+            "pause\r\n"
+            "exit /b 1\r\n"
+            ":cleanup_failed\r\n"
+            "echo Update installed, but old application files could not be removed.\r\n"
+            f'echo Backup files: {old_internal} and {old_exe}\r\n'
+            "pause\r\n"
+            f'start "" "{current}"\r\n'
+            "exit /b 1\r\n"
         )
         env = {k: v for k, v in os.environ.items() if not k.startswith(("_MEI", "_PYI"))}
         env["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
@@ -215,16 +276,32 @@ def apply_update(downloaded: Path, progress: Progress | None = None) -> None:
         app_bundle = Path(sys.executable).resolve().parents[2]
         extract_dir = downloaded.parent / "extracted"
         _extract_update(downloaded, extract_dir, progress)
-        new_app = next(extract_dir.glob("*.app"))
+        new_app = extract_dir / "JobManager.app"
+        if not (new_app / "Contents" / "MacOS" / "JobManager").is_file():
+            raise RuntimeError("The macOS update archive is missing the application executable.")
+        backup = app_bundle.with_name(f"{app_bundle.name}.update-backup-{uuid.uuid4().hex}")
         script = downloaded.parent / "apply_update.sh"
+        owned_dir = _owned_update_dir(downloaded)
+        cleanup_staging = f"rm -rf -- {shlex.quote(str(owned_dir))}\n" if owned_dir else ""
+        old = shlex.quote(str(app_bundle))
+        new = shlex.quote(str(new_app))
+        backup_arg = shlex.quote(str(backup))
         script.write_text(
             "#!/bin/sh\n"
             f"while kill -0 {pid} 2>/dev/null; do sleep 1; done\n"
-            f'rm -rf "{app_bundle}"\n'
-            f'ditto "{new_app}" "{app_bundle}"\n'
-            f'xattr -dr com.apple.quarantine "{app_bundle}" 2>/dev/null\n'
-            f'open "{app_bundle}"\n'
-            f'rm -rf "{downloaded.parent}"\n'
+            f"if ! mv {old} {backup_arg}; then osascript -e 'display alert \"Update failed: cannot move the old app.\"'; exit 1; fi\n"
+            f"if ! ditto {new} {old}; then\n"
+            f"  if ! rm -rf -- {old} || ! mv {backup_arg} {old}; then\n"
+            "    osascript -e 'display alert \"Update rollback failed; restore the backup manually.\"'\n"
+            "    exit 1\n"
+            "  fi\n"
+            "  osascript -e 'display alert \"Update failed; the previous app was restored.\"'\n"
+            "  exit 1\n"
+            "fi\n"
+            f"xattr -dr com.apple.quarantine {old} 2>/dev/null\n"
+            f"if ! rm -rf -- {backup_arg}; then osascript -e 'display alert \"Update installed, but old app backup could not be removed.\"'; fi\n"
+            f"open {old}\n"
+            f"{cleanup_staging}"
         )
         script.chmod(0o755)
         env = {k: v for k, v in os.environ.items() if not k.startswith(("_MEI", "_PYI"))}

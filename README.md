@@ -95,6 +95,10 @@ folder's contents into `Jobs` if you want them on the drive.
 Updates: the app checks for a new version at launch and can update itself
 (**Check for updates**). Windows releases are folders distributed as ZIP files so the bundled Ollama runtime is not
 re-extracted on every launch. The app can overlay updates in place while preserving user files.
+The updater replaces the app's managed runtime and removes the previous runtime
+and its own temporary download after a successful update; it does not delete jobs,
+user-created files, or separately downloaded copies of the app. If installation
+fails, recovery files may be retained and their location is shown.
 Windows updates download a roughly 1.7 GB archive and then extract it; allow several
 GB of free space and keep the app open during both stages. If an update stalls, close
 the app, extract the latest Windows ZIP to a writable folder and run its `JobManager.exe`.

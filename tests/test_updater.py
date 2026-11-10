@@ -1,5 +1,7 @@
 import zipfile
 import stat
+import os
+import subprocess
 
 import httpx
 import pytest
@@ -83,6 +85,9 @@ def test_windows_update_extracts_and_overlays_app_folder(tmp_path, monkeypatch):
     install.mkdir()
     executable = install / "JobManager.exe"
     executable.write_text("old")
+    (install / "_internal").mkdir()
+    (install / "Jobs").mkdir()
+    (install / "Jobs" / "job.txt").write_text("preserve")
     downloaded = tmp_path / "update" / "JobManager-windows.zip"
     downloaded.parent.mkdir()
     with zipfile.ZipFile(downloaded, "w") as archive:
@@ -98,6 +103,73 @@ def test_windows_update_extracts_and_overlays_app_folder(tmp_path, monkeypatch):
     script = (downloaded.parent / "apply_update.bat").read_text()
     assert "robocopy" in script and str(install) in script
     assert "pause" in script and "Update failed" in script
+    assert "_internal-update-backup-" in script and ":restore_internal" in script
+    assert str(install / "Jobs") not in script
+    assert 'rmdir /S /Q "' + str(downloaded.parent) + '"' not in script
+    assert (install / "Jobs" / "job.txt").read_text() == "preserve"
+
+
+def test_owned_update_directory_cleanup_is_scoped(tmp_path, monkeypatch):
+    monkeypatch.setattr(updater.tempfile, "gettempdir", lambda: str(tmp_path))
+    owned = tmp_path / "jm_update_owned"
+    owned.mkdir()
+    (owned / updater._UPDATE_MARKER).write_text("Engineering App update\n")
+    (owned / "file.zip").write_bytes(b"update")
+    untouched = tmp_path / "jm_update_unmarked"
+    untouched.mkdir()
+    (untouched / "file.zip").write_bytes(b"old")
+    updater.cleanup_update(untouched / "file.zip")
+    updater.cleanup_update(owned / "file.zip")
+    assert not owned.exists()
+    assert (untouched / "file.zip").read_bytes() == b"old"
+
+
+def test_failed_download_cleans_owned_staging(monkeypatch, tmp_path):
+    monkeypatch.setattr(updater.tempfile, "tempdir", str(tmp_path))
+    transport = httpx.MockTransport(lambda req: httpx.Response(503))
+    client = httpx.Client(transport=transport)
+    monkeypatch.setattr(updater.httpx, "stream", lambda method, url, **kw: client.stream(method, url))
+    info = updater.UpdateInfo("2.0.0", "", "JobManager-windows.zip", "https://x/a")
+    with pytest.raises(httpx.HTTPStatusError):
+        updater.download_update(info)
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize("fail_copy", [False, True])
+def test_macos_update_replaces_or_restores_app(tmp_path, monkeypatch, fail_copy):
+    app = tmp_path / "JobManager.app"
+    executable = app / "Contents" / "MacOS" / "JobManager"
+    executable.parent.mkdir(parents=True)
+    executable.write_text("old")
+    download = tmp_path / "staging" / "JobManager-macos.zip"
+    download.parent.mkdir()
+    with zipfile.ZipFile(download, "w") as archive:
+        archive.writestr("JobManager.app/Contents/MacOS/JobManager", "new")
+    tools = tmp_path / "bin"
+    tools.mkdir()
+    commands = {
+        "ditto": "#!/bin/sh\nexit 1\n" if fail_copy else '#!/bin/sh\ncp -R "$1" "$2"\n',
+        "osascript": "#!/bin/sh\nexit 0\n",
+        "xattr": "#!/bin/sh\nexit 0\n",
+        "open": "#!/bin/sh\nexit 0\n",
+    }
+    for name, text in commands.items():
+        path = tools / name
+        path.write_text(text)
+        path.chmod(0o755)
+    with monkeypatch.context() as patch:
+        patch.setattr(updater.sys, "platform", "darwin")
+        patch.setattr(updater.sys, "executable", str(executable))
+        patch.setattr(updater.os, "getpid", lambda: 2147483647)
+        patch.setattr(updater.subprocess, "Popen", lambda *args, **kwargs: None)
+        updater.apply_update(download)
+    env = {**os.environ, "PATH": f"{tools}{os.pathsep}{os.environ['PATH']}"}
+    result = subprocess.run(["/bin/sh", str(download.parent / "apply_update.sh")],
+                            env=env, capture_output=True, timeout=30)
+    assert result.returncode == (1 if fail_copy else 0)
+    assert executable.read_text() == ("old" if fail_copy else "new")
+    assert list(tmp_path.glob("JobManager.app.update-backup-*")) == []
+    assert download.exists()
 
 
 def test_windows_update_reports_unwritable_app_folder(tmp_path, monkeypatch):
