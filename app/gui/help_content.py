@@ -91,6 +91,8 @@ HELP_SECTIONS = {
         "Missing or uncertain quantities remain blank or flagged for review; do not "
         "assume a quantity or that a matched material is in scope. If a cloud AI "
         "provider fails, the app uses local Ollama. Check the selected provider's "
-        "API key, billing, model ID and image support if you want to use it instead."
+        "API key, billing, model ID and image support if you want to use it instead. "
+        "If Ollama returns an empty answer, the app retries and may take longer; "
+        "a successful result still needs review."
     ),
 }

@@ -129,13 +129,40 @@ def _chat_once(model: str, prompt: str, images: list[bytes], json_mode: bool) ->
     return content
 
 
+def _generate_once(model: str, prompt: str, images: list[bytes], json_mode: bool) -> str:
+    payload = {
+        "model": model,
+        "prompt": prompt,
+        "images": [base64.b64encode(image).decode("ascii") for image in images],
+        "stream": False,
+        "think": False,
+        "options": {"num_ctx": OLLAMA_CONTEXT_LENGTH},
+    }
+    if json_mode:
+        payload["format"] = "json"
+    reply = _request("/api/generate", payload, timeout=900)
+    content = reply.get("response")
+    if not isinstance(content, str) or not content.strip():
+        raise OllamaResponseError("empty_response", "Ollama returned no generated response.")
+    return content
+
+
 def chat(model: str, prompt: str, images: list[bytes]) -> str:
     ensure_model()
-    # JSON mode can yield empty output on some vision models; retry once without it.
+    # JSON mode can yield empty output on some vision models; retry without it.
     try:
         return _chat_once(model, prompt, images, json_mode=True)
-    except OllamaResponseError:
+    except OllamaResponseError as exc:
+        logger.warning("Ollama chat returned %s; retrying without JSON mode.", exc.code)
+    try:
         return _chat_once(model, prompt, images, json_mode=False)
+    except OllamaResponseError as exc:
+        logger.warning("Ollama chat returned %s; trying the generate endpoint.", exc.code)
+    try:
+        return _generate_once(model, prompt, images, json_mode=True)
+    except OllamaResponseError as exc:
+        logger.warning("Ollama generate returned %s; retrying without JSON mode.", exc.code)
+        return _generate_once(model, prompt, images, json_mode=False)
 
 
 def ensure_server(timeout: float = 60) -> None:

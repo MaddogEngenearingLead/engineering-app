@@ -52,7 +52,8 @@ Legend: ✅ done · 🟡 partly done · ⬜ not started
 - Dashboard shows only the PDF; CSV/JSON are internal.
 
 ### Phase 5 – Accuracy on more drawings 🟡 in progress
-- Optional AI fallback reads the drawing index to classify demo and new-work pages (v0.1.18).
+- AI review reads the drawing index to classify demo and new-work pages; a configured
+  primary provider is used first, with local Ollama as the fallback.
 - [ ] Run on additional real P&ID/scope pairs and add anonymised fixtures for regression tests.
 - [ ] Count unlabelled valve/flange/fitting symbols from the symbol legend (today: scope-only rows).
 - [ ] Piping footage: use a scale or let the user mark lengths on the viewer (today: manual entry in a question).

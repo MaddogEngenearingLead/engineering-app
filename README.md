@@ -249,6 +249,11 @@ The fallback connects to Ollama on `127.0.0.1:11434`, reusing an existing server
 or starting the bundled one. The first model download requires DNS and HTTPS
 access to Ollama's registry; if it fails, restore access and retry the scan. A
 running server without the downloaded model is not yet a ready fallback.
+If Ollama returns an empty or thinking-only chat answer, the app retries without
+JSON mode, then tries the generate endpoint with and without JSON mode. These
+attempts can take additional time and may still fail; HTTP and connection errors
+are reported without these retries. A successful response must still be readable
+JSON, and generated findings require review.
 
 When a desktop job scan fails, the app saves a JSON debug report in an `error`
 folder beside the jobs folder and offers to save a copy. Earlier reports remain

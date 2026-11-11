@@ -157,11 +157,68 @@ def test_chat_retries_without_json_mode_on_empty_content(monkeypatch):
 
 
 def test_chat_reports_response_error_code(monkeypatch):
-    import pytest
     from app.services import ollama_runtime as rt
 
     monkeypatch.setattr(rt, "ensure_model", lambda: None)
-    monkeypatch.setattr(rt, "_request", lambda *a, **k: {"message": {"content": "", "thinking": "x"}})
+
+    def request(path, *args, **kwargs):
+        if path == "/api/chat":
+            return {"message": {"content": "", "thinking": "x"}}
+        return {"response": ""}
+
+    monkeypatch.setattr(rt, "_request", request)
     with pytest.raises(rt.OllamaResponseError) as info:
         rt.chat("m", "p", [])
-    assert info.value.code == "thinking_only"
+    assert info.value.code == "empty_response"
+
+
+def test_chat_falls_back_to_generate_when_chat_has_thinking_only(monkeypatch):
+    from app.services import ollama_runtime as rt
+
+    monkeypatch.setattr(rt, "ensure_model", lambda: None)
+    calls = []
+
+    def request(path, payload=None, timeout=10):
+        calls.append((path, payload))
+        if path == "/api/chat":
+            return {"message": {"content": "", "thinking": "x"}}
+        return {"response": '{"ok": true}'}
+
+    monkeypatch.setattr(rt, "_request", request)
+    assert rt.chat("m", "p", [b"img"]) == '{"ok": true}'
+    assert [path for path, _ in calls] == ["/api/chat", "/api/chat", "/api/generate"]
+    assert calls[2][1]["images"] == ["aW1n"]
+    assert calls[2][1]["prompt"] == "p"
+    assert calls[2][1]["format"] == "json"
+    assert calls[2][1]["think"] is False
+
+
+def test_generate_retries_without_json_and_fails_after_four_attempts(monkeypatch):
+    calls = []
+    monkeypatch.setattr(ollama_runtime, "ensure_model", lambda: None)
+
+    def request(path, payload=None, timeout=10):
+        calls.append((path, payload))
+        return {"message": {"content": ""}} if path == "/api/chat" else {"response": ""}
+
+    monkeypatch.setattr(ollama_runtime, "_request", request)
+    with pytest.raises(ollama_runtime.OllamaResponseError, match="no generated response") as error:
+        ollama_runtime.chat("m", "p", [b"img"])
+    assert error.value.code == "empty_response"
+    assert [path for path, _ in calls] == ["/api/chat", "/api/chat", "/api/generate", "/api/generate"]
+    assert "format" not in calls[-1][1]
+    assert calls[-1][1]["images"] == ["aW1n"]
+
+
+def test_chat_does_not_retry_http_errors(monkeypatch):
+    calls = []
+    monkeypatch.setattr(ollama_runtime, "ensure_model", lambda: None)
+
+    def request(path, payload=None, timeout=10):
+        calls.append(path)
+        raise ollama_runtime.OllamaHTTPError(path, 400, "model does not support images")
+
+    monkeypatch.setattr(ollama_runtime, "_request", request)
+    with pytest.raises(ollama_runtime.OllamaHTTPError):
+        ollama_runtime.chat("m", "p", [b"img"])
+    assert calls == ["/api/chat"]

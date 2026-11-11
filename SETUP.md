@@ -63,5 +63,9 @@ Environment overrides (`.env`): `APP_NAME`, `ENVIRONMENT`, `UPLOAD_DIR` (default
 ## Troubleshooting
 - **`ModuleNotFoundError`** – activate the virtual environment and re-run `pip install -r requirements.txt`.
 - **Tk errors on Linux** – install `python3-tk`.
+- **Local AI returns no answer** – the app retries empty chat responses and then tries
+  Ollama's generate endpoint; this can take extra time and does not guarantee success.
+  If the scan still fails, use **Open debug reports** and review the report before sharing
+  it. New reports are in the `error` folder beside the jobs folder.
 - **"Failed to load Python DLL" after an update** – fixed in v0.1.5; if you are on an older
   version, download and extract the latest `JobManager-windows.zip` once by hand.
