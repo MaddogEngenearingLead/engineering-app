@@ -265,3 +265,8 @@ Ollama's error details are displayed locally in the failure message, not in the 
 When the primary provider fails, Ollama reviews drawing pages individually to
 reduce vision context usage; page-level results are unverified and may lack
 cross-page context, so check the complete drawing set.
+
+Scope approval checks that the drawing used to prepare the draft is unchanged
+and that the job's primary P&ID has not changed. A recorded primary drawing
+can also be outside the job's `pid` folder. If either check fails, scan again
+and review the new draft before approval.

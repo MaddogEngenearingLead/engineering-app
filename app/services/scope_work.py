@@ -276,8 +276,11 @@ def approve_scope_draft(jm: JobManager, job_number: str, text: str) -> Path:
     pid_files = jm.get_pid_files(job_number)
     source = Path(draft["pid_file"])
     _, pid_dir, _ = jm.get_job_dirs(job_number)
-    if (not pid_files or str(pid_files[0].resolve()) != draft["primary_pid_file"]
-            or source.resolve().parent != pid_dir.resolve() or not source.is_file()
+    primary = pid_files[0].resolve() if pid_files else None
+    resolved_source = source.resolve()
+    if (primary is None or primary != Path(draft["primary_pid_file"]).resolve()
+            or (resolved_source.parent != pid_dir.resolve() and resolved_source != primary)
+            or not source.is_file()
             or _digest(source) != draft["pid_sha256"]):
         raise ValueError("The P&ID changed since the draft was prepared; scan again.")
     if jm.get_scope_files(job_number):

@@ -182,6 +182,51 @@ def test_reject_stale_draft_and_existing_scope(freetext_pdf, tmp_path):
     assert jm.get_scope_files("101")[0].read_text() == "Original scope"
 
 
+def test_approves_unchanged_recorded_pid_outside_job_folder(freetext_pdf, tmp_path):
+    freetext_pdf = Path(freetext_pdf)
+    jm = JobManager(str(tmp_path / "jobs"))
+    job_dir, _, _, _ = jm.get_or_create_job("101")
+    jm._record_path("101", job_dir, "pid_file", freetext_pdf.resolve())
+    assert run_job_scan(jm, "101")["status"] == "needs_scope_review"
+
+    approved = approve_scope_draft(jm, "101", "Install valve.")
+    assert approved.read_text().strip() == "Install valve."
+
+
+def test_rejects_changed_or_replaced_recorded_external_pid(freetext_pdf, tmp_path):
+    freetext_pdf = Path(freetext_pdf)
+    jm = JobManager(str(tmp_path / "jobs"))
+    job_dir, _, _, _ = jm.get_or_create_job("101")
+    jm._record_path("101", job_dir, "pid_file", freetext_pdf.resolve())
+    assert run_job_scan(jm, "101")["status"] == "needs_scope_review"
+    original = freetext_pdf.read_bytes()
+    freetext_pdf.write_bytes(original + b"changed")
+    with pytest.raises(ValueError, match="P&ID changed"):
+        approve_scope_draft(jm, "101", "Install valve.")
+    freetext_pdf.write_bytes(original)
+
+    replacement = tmp_path / "replacement.pdf"
+    replacement.write_bytes(original)
+    jm._record_path("101", job_dir, "pid_file", replacement.resolve())
+    with pytest.raises(ValueError, match="P&ID changed"):
+        approve_scope_draft(jm, "101", "Install valve.")
+    assert not jm.get_scope_files("101")
+
+
+def test_rejects_external_draft_source_that_is_not_recorded_primary(freetext_pdf, tmp_path):
+    jm = JobManager(str(tmp_path / "jobs"))
+    jm.add_job_files("101", str(freetext_pdf))
+    assert run_job_scan(jm, "101")["status"] == "needs_scope_review"
+    job_dir, _, _ = jm.get_job_dirs("101")
+    draft_path = job_dir / "scope_draft.json"
+    draft = json.loads(draft_path.read_text())
+    draft["pid_file"] = str(Path(freetext_pdf).resolve())
+    draft_path.write_text(json.dumps(draft))
+    with pytest.raises(ValueError, match="P&ID changed"):
+        approve_scope_draft(jm, "101", "Install valve.")
+    assert not jm.get_scope_files("101")
+
+
 def test_draft_includes_drawing_notes_even_for_embedded_bom(tmp_path):
     from app.services.scope_work import create_scope_draft
     from tests.conftest import make_pdf
