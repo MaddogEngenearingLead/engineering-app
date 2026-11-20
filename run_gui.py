@@ -1,10 +1,10 @@
-"""Entry point for the Job Manager desktop GUI (also used for the PyInstaller build)."""
-import sys
+"""Entry point for the desktop GUI and packaged-app self-tests."""
 import os
+import sys
 
 
 def selftest(require_bundled_ocr: bool = False, require_bundled_ollama: bool = False) -> int:
-    """Import everything the app needs and run a real PDF scan; used to verify packaged builds."""
+    """Run the packaged-app smoke test used by CI."""
     import tempfile
     from pathlib import Path
 
@@ -26,20 +26,15 @@ def selftest(require_bundled_ocr: bool = False, require_bundled_ollama: bool = F
     if require_bundled_ollama:
         executable = "ollama.exe" if sys.platform.startswith("win") else "ollama"
         bundled_executable = ollama_runtime / executable
-        assert getattr(sys, "frozen", False) and bundled_executable.is_file(), \
-            "bundled Ollama runtime missing"
-        assert sys.platform.startswith("win") or os.access(bundled_executable, os.X_OK), \
-            "bundled Ollama executable is not executable"
+        assert getattr(sys, "frozen", False) and bundled_executable.is_file(), "bundled Ollama runtime missing"
+        assert sys.platform.startswith("win") or os.access(bundled_executable, os.X_OK), "Ollama executable not executable"
         import subprocess
-
         subprocess.run([str(bundled_executable), "--version"], check=True, timeout=30)
     if getattr(sys, "frozen", False) and bundle.is_dir():
         from PIL import Image, ImageDraw, ImageFont
         from app.services.drawing_ocr import _searchable_page, _tesseract
-
         binary, _ = _tesseract()
         assert binary and Path(binary).is_relative_to(bundle), "bundled OCR executable missing"
-
         image = Image.new("RGB", (1600, 320), "white")
         draw = ImageDraw.Draw(image)
         font = ImageFont.load_default(size=48)
@@ -47,9 +42,7 @@ def selftest(require_bundled_ocr: bool = False, require_bundled_ollama: bool = F
         draw.text((30, 100), "MD601-0 M-601-0", font=font, fill="black")
         draw.text((30, 180), "ITEM DESCRIPTION QTY", font=font, fill="black")
         text, _, _, _ = _searchable_page(image, 150)
-        assert "MATERIALS" in text.upper(), "bundled OCR failed"
-        assert "MD601-0" in text.upper() and "M-601-0" in text.upper(), \
-            "bundled OCR did not read the sample drawing identifiers"
+        assert "MATERIALS" in text.upper() and "MD601-0" in text.upper() and "M-601-0" in text.upper(), "bundled OCR failed"
         print("SELFTEST bundled OCR ok")
     d = Path(tempfile.mkdtemp())
     c = canvas.Canvas(str(d / "pid.pdf"))
@@ -73,7 +66,6 @@ def selftest(require_bundled_ocr: bool = False, require_bundled_ollama: bool = F
     print("SELFTEST", out["status"], out.get("message"))
     from app.gui.review_window import render_location
     from app.services.job_scan import load_review, save_review
-
     if out["status"] == "completed":
         assert render_location(str(d / "pid.pdf"), 2, 100, 100)[:4] == b"\x89PNG", "preview failed"
         review = load_review(jm, "T-1")
@@ -87,6 +79,5 @@ if __name__ == "__main__":
             or "--selftest-require-bundled-ollama" in sys.argv):
         sys.exit(selftest(require_bundled_ocr="--selftest-require-bundled-ocr" in sys.argv,
                           require_bundled_ollama="--selftest-require-bundled-ollama" in sys.argv))
-    from app.gui.job_manager_gui import main
-
+    from app.gui.feature_controls import main
     main()
