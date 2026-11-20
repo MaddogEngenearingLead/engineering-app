@@ -125,7 +125,7 @@ def install() -> None:
 
 
 def _install_gui_hooks(gui) -> None:
-    """Attach progress display and the fallback checkbox without replacing existing screens."""
+    """Attach scan progress, fallback controls and opt-in version selection."""
     original_row = gui.JobManagerApp._job_row
 
     def job_row(self, parent, meta):
@@ -214,6 +214,92 @@ def _install_gui_hooks(gui) -> None:
                 ollama_runtime.stop_owned_server()
 
     gui.AISettingsWindow = AISettingsWindowWithFallback
+
+    # Updates are deliberately opt-in: do not query or surface an update at startup.
+    gui.JobManagerApp._check_updates = lambda self: None
+    original_dashboard = gui.JobManagerApp.show_dashboard
+
+    def show_dashboard_with_version_choice(self):
+        original_dashboard(self)
+        for child in self.body.winfo_children():
+            if isinstance(child, gui.tk.Frame):
+                for widget in child.winfo_children():
+                    if isinstance(widget, gui.tk.Button) and widget.cget("text") == "Check for updates":
+                        widget.configure(text="Choose app version", command=self.choose_app_version)
+
+    gui.JobManagerApp.show_dashboard = show_dashboard_with_version_choice
+
+    def choose_app_version(self):
+        from app.services.update_releases import list_available_releases
+
+        def load_releases():
+            releases, error = list_available_releases()
+
+            def show_dialog():
+                if error:
+                    gui.messagebox.showerror("Choose app version", error, parent=self)
+                    return
+                if not releases:
+                    gui.messagebox.showinfo("Choose app version", "No packaged releases are available.", parent=self)
+                    return
+                dialog = gui.tk.Toplevel(self)
+                dialog.title("Choose app version")
+                dialog.geometry("560x420")
+                dialog.transient(self)
+                gui.tk.Label(dialog, text=f"Installed version: v{gui.__version__ if hasattr(gui, '__version__') else 'current'}\n"
+                             "Choose a release to install. Older versions can be selected to roll back.",
+                             justify="left", wraplength=520).pack(anchor="w", padx=12, pady=10)
+                labels = [f"v{info.version}" for info in releases]
+                by_label = dict(zip(labels, releases))
+                selected = gui.tk.StringVar(value=labels[0])
+                picker = gui.ttk.Combobox(dialog, textvariable=selected, values=labels, state="readonly")
+                picker.pack(fill="x", padx=12)
+                notes = gui.tk.Text(dialog, wrap="word", height=12)
+                notes.pack(fill="both", expand=True, padx=12, pady=8)
+
+                def show_notes(_event=None):
+                    notes.configure(state="normal")
+                    notes.delete("1.0", "end")
+                    notes.insert("1.0", by_label[selected.get()].notes or "No release notes provided.")
+                    notes.configure(state="disabled")
+                    install_button.configure(
+                        state="normal" if by_label[selected.get()].version != gui.__version__ else "disabled")
+
+                def install_selected():
+                    info = by_label[selected.get()]
+                    from app.services.updater import is_newer
+                    action = "downgrade" if is_newer(gui.__version__, info.version) else "update"
+                    if not gui.messagebox.askyesno(
+                        "Confirm version change",
+                        f"Install v{info.version} as a {action}? The app will close while it is installed.",
+                        parent=dialog,
+                    ):
+                        return
+                    dialog.destroy()
+                    self.update_info = info
+                    self.start_update()
+
+                buttons = gui.tk.Frame(dialog)
+                buttons.pack(fill="x", padx=12, pady=(0, 12))
+                install_button = gui.ttk.Button(buttons, text="Install selected version",
+                                                command=install_selected)
+                install_button.pack(side="right")
+                gui.ttk.Button(buttons, text="Cancel", command=dialog.destroy).pack(side="right", padx=8)
+                picker.bind("<<ComboboxSelected>>", show_notes)
+                show_notes()
+                if not gui.can_self_update():
+                    install_button.configure(state="disabled")
+                    gui.tk.Label(dialog, text="In-app installation is available in packaged builds only.",
+                                 fg="#8a4b08").pack(anchor="w", padx=12, pady=(0, 8))
+
+            try:
+                self.after(0, show_dialog)
+            except Exception:
+                pass
+
+        threading.Thread(target=load_releases, daemon=True).start()
+
+    gui.JobManagerApp.choose_app_version = choose_app_version
 
 
 def main() -> None:
