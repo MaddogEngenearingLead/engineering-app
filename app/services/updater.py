@@ -189,6 +189,48 @@ def _extract_update(downloaded: Path, destination: Path, progress: Progress | No
         path.symlink_to(link)
 
 
+def _powershell_literal(path: Path) -> str:
+    """Quote a path as a PowerShell single-quoted string literal."""
+    return "'" + str(path).replace("'", "''") + "'"
+
+
+def _write_windows_copy_script(script: Path, source: Path, destination: Path) -> None:
+    """Create a helper that copies the runtime and prints aggregate percent progress."""
+    script.write_text(
+        "$ErrorActionPreference = 'Stop'\n"
+        f"$source = {_powershell_literal(source)}\n"
+        f"$destination = {_powershell_literal(destination)}\n"
+        "$files = @(Get-ChildItem -LiteralPath $source -File -Force -Recurse)\n"
+        "$total = [long](($files | Measure-Object -Property Length -Sum).Sum)\n"
+        "$copied = [long]0\n"
+        "$lastPercent = -1\n"
+        "New-Item -ItemType Directory -Force -Path $destination | Out-Null\n"
+        "foreach ($file in $files) {\n"
+        "  $relative = $file.FullName.Substring($source.Length).TrimStart('\\', '/')\n"
+        "  $target = Join-Path $destination $relative\n"
+        "  $parent = Split-Path -Parent $target\n"
+        "  New-Item -ItemType Directory -Force -Path $parent | Out-Null\n"
+        "  $inputStream = [System.IO.File]::OpenRead($file.FullName)\n"
+        "  try {\n"
+        "    $outputStream = [System.IO.File]::Open($target, [System.IO.FileMode]::Create, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)\n"
+        "    try {\n"
+        "      $buffer = New-Object byte[] (1MB)\n"
+        "      while (($read = $inputStream.Read($buffer, 0, $buffer.Length)) -gt 0) {\n"
+        "        $outputStream.Write($buffer, 0, $read)\n"
+        "        $copied += $read\n"
+        "        if ($total -gt 0) { $percent = [int][Math]::Min(100, [Math]::Floor(100 * $copied / $total)) } else { $percent = 100 }\n"
+        "        if ($percent -ne $lastPercent) { Write-Host (\"Installing runtime: {0}%\" -f $percent); $lastPercent = $percent }\n"
+        "      }\n"
+        "    } finally { $outputStream.Dispose() }\n"
+        "  } finally { $inputStream.Dispose() }\n"
+        "  [System.IO.File]::SetLastWriteTimeUtc($target, $file.LastWriteTimeUtc)\n"
+        "  try { [System.IO.File]::SetAttributes($target, $file.Attributes -band (-bnot [System.IO.FileAttributes]::ReparsePoint)) } catch {}\n"
+        "}\n"
+        "if ($lastPercent -lt 100) { Write-Host 'Installing runtime: 100%' }\n",
+        encoding="utf-8",
+    )
+
+
 def apply_update(downloaded: Path, progress: Progress | None = None) -> None:
     """Start a helper that swaps in the new build after this process exits, then relaunches.
 
@@ -216,6 +258,8 @@ def apply_update(downloaded: Path, progress: Progress | None = None) -> None:
         old_internal = install_dir / f"_internal-update-backup-{suffix}"
         old_exe = install_dir / f"JobManager-update-backup-{suffix}.exe"
         script = downloaded.parent / "apply_update.bat"
+        copy_script = downloaded.parent / "copy_runtime.ps1"
+        _write_windows_copy_script(copy_script, extract_dir / "_internal", install_dir / "_internal")
         owned_dir = _owned_update_dir(downloaded)
         cleanup_staging = f'(goto) 2>nul & rmdir /S /Q "{owned_dir}"\r\n' if owned_dir else ""
         script.write_text(
@@ -228,13 +272,15 @@ def apply_update(downloaded: Path, progress: Progress | None = None) -> None:
             "  ping -n 2 127.0.0.1 >nul\r\n"
             "  goto wait\r\n"
             ")\r\n"
-            "echo Installing the update. Please wait...\r\n"
+            "echo Installing update: preparing files...\r\n"
             f'move "{install_dir / "_internal"}" "{old_internal}" >nul\r\n'
             "if errorlevel 1 goto failed\r\n"
             f'move "{current}" "{old_exe}" >nul\r\n'
             "if errorlevel 1 goto restore_internal\r\n"
-            f'robocopy "{extract_dir / "_internal"}" "{install_dir / "_internal"}" /E /COPY:DAT /R:2 /W:1 >nul\r\n'
-            "if errorlevel 8 goto restore_new_internal\r\n"
+            "rem Runtime copy replaces robocopy so aggregate percentage progress can be displayed.\r\n"
+            f'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "{copy_script}"\r\n'
+            "if errorlevel 1 goto restore_new_internal\r\n"
+            "echo Installing executable: 100%\r\n"
             f'copy /Y "{extract_dir / "JobManager.exe"}" "{current}" >nul\r\n'
             "if errorlevel 1 goto restore_new_internal\r\n"
             f'rmdir /S /Q "{old_internal}"\r\n'
