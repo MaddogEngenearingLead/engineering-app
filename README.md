@@ -3,10 +3,10 @@
 A desktop app that reads a P&ID drawing (PDF), compares it with a scope-of-work
 document, and produces a bill of materials (BOM) containing only what the scope
 calls for. Drawing processing and OCR run locally, and there are no app accounts
-or login. Every scan uses AI: the configured provider is tried first, with bundled
-local Ollama used only if that provider is unavailable or fails. Ollama starts
-automatically and downloads its vision model on first launch. The app also contacts
-GitHub to check for updates.
+or login. Scans use the configured AI provider first; local Ollama fallback is
+optional and can be enabled or disabled in AI settings. Ollama can start automatically
+and downloads its vision model on first launch. The app also contacts GitHub to
+check for updates and can offer a release-version selector or rollback.
 
 ## How it works
 
@@ -86,8 +86,7 @@ Download the latest release from the repository's **Releases** page:
 - **macOS:** `JobManager-macos.zip` (unzip and open `JobManager.app`).
 
 **Portable use (USB drive, Windows):** unzip the full app folder onto the drive and run `JobManager.exe`;
-jobs are saved in a
-`Jobs` folder next to it, so they travel with the program. On a normal hard drive, create an empty
+jobs are saved in a `Jobs` folder next to it, so they travel with the program. On a normal hard drive, create an empty
 `Jobs` folder beside the exe to get the same behaviour; otherwise jobs live in
 `%LOCALAPPDATA%\EngineeringApp\uploads`. Existing jobs are not moved automatically; copy that
 folder's contents into `Jobs` if you want them on the drive.
@@ -99,6 +98,9 @@ The updater replaces the app's managed runtime and removes the previous runtime
 and its own temporary download after a successful update; it does not delete jobs,
 user-created files, or separately downloaded copies of the app. If installation
 fails, recovery files may be retained and their location is shown.
+The update window can also show available releases and, where supported, let you
+select a specific version or reinstall a previous release for rollback. Treat
+rollback as an operational recovery option; keep a copy of the `Jobs` folder.
 Windows updates download a roughly 1.7 GB archive and then extract it; allow several
 GB of free space and keep the app open during both stages. If an update stalls, close
 the app, extract the latest Windows ZIP to a writable folder and run its `JobManager.exe`.
@@ -153,7 +155,7 @@ app/
     bom_select.py          # which items go on the BOM, and why
     review_questions.py    # flags -> questions; applying/undoing answers
     bom_export.py          # PDF / JSON / CSV export
-    updater.py             # GitHub release check and in-place update
+    updater.py             # GitHub release check, version selection and in-place update
   version.py, update_config.py
   main.py, api/, config.py # optional local HTTP API (see below)
 frontend/                  # legacy browser UI for the HTTP API (not used by the desktop app)
@@ -201,7 +203,7 @@ No license has been specified yet.
 
 ## Using other drawings and vocabulary
 
-Nothing is tied to a particular drawing. Codes come from each drawing's own legend and from tag prefixes repeated on its pages. To add your own codes, place a `vocabulary.json` next to the program:
+Nothing is tied to a particular drawing. Codes come from each drawing's own legend and from tag prefixes repeated on its pages. To add your own codes, place a `vocabulary.json` next to the program executable (or in the project root when running from source):
 
 ```json
 {"codes": {"XYZ": "Custom Device"}, "ignore_prefixes": ["DWG"], "scope_aliases": {"Pneumatic Valve": ["POV"]}}
@@ -230,21 +232,21 @@ compatible provider, also supply its HTTPS
 API base URL (typically ending in `/v1`); the service must support image inputs.
 The settings window explains each field and links to the selected provider's
 API-key page and model catalog. A key is optional: if the selected provider has no working
-configuration, the app uses local Ollama instead.
+configuration, the app uses local Ollama when fallback is enabled.
 ChatGPT uses an OpenAI API key and API billing; a ChatGPT subscription does not
 include API access.
 Available models, costs and image limits depend on the provider. Not every AI
 service supports this protocol. Provider keys are stored separately in the local
 settings file as plaintext. If the selected cloud provider is unavailable or fails,
-the app automatically switches to local Ollama. When no scope is supplied, the app sends
+the app automatically switches to local Ollama only when Ollama fallback is enabled.
+When no scope is supplied, the app sends
 extracted drawing text, BOM rows and its review index to prepare a phased,
 source-cited scope draft. Review
 and approve all generated scope language before use; matching evidence references
 do not establish authorization or prove a complete takeoff. AI's missing/unneeded
 item suggestions change nothing until you approve them.
 
-Ollama is bundled with the Windows and macOS apps and starts in the background when the app launches. On first start it downloads `qwen3-vl:4b` (about 3.3 GB) into the app's local data folder; allow disk space and internet access for this one-time download. A configured cloud provider remains primary; Ollama is used only if it is missing or fails. If OCR identifies a BOM page but cannot reconstruct its table, AI also receives overlapping images of that page and attempts a transcription before clarification is requested. If OCR is unavailable, image-only pages are sent for the same attempt. AI-transcribed rows are **unverified**; check every row, quantity, unit, scope and completeness against the drawing. Settings are stored in `%LOCALAPPDATA%\EngineeringApp\ai_settings.json` on Windows, or under `$XDG_CONFIG_HOME/EngineeringApp/` (default `~/.config/EngineeringApp/`) on macOS and Linux.
-
+Ollama is bundled with the Windows and macOS apps and starts in the background when the app launches if fallback is enabled. On first start it downloads `qwen3-vl:4b` (about 3.3 GB) into the app's local data folder;
 The fallback connects to Ollama on `127.0.0.1:11434`, reusing an existing server
 or starting the bundled one. The first model download requires DNS and HTTPS
 access to Ollama's registry; if it fails, restore access and retry the scan. A
