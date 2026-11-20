@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 from contextvars import ContextVar
-from pathlib import Path
 import re
 import threading
 
@@ -147,8 +146,6 @@ def _install_gui_hooks(gui) -> None:
         visit(parent)
 
     gui.JobManagerApp._job_row = job_row
-
-    original_start = gui.JobManagerApp.start_scan
 
     def render_progress(self, job_number, message, completed, total):
         self._scan_progress[job_number] = (message, completed, total)
