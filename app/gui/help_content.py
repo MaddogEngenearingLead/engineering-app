@@ -32,6 +32,27 @@ def provider_guidance(name: str, provider_class: type) -> str:
 
 
 HELP_SECTIONS = {
+    "Welcome": (
+        "Welcome to Engineering App.\n\n"
+
+        "Engineering App assists with reviewing P&IDs, generating BOMs, "
+        "tracking jobs, reviewing drawing issues, drafting scopes of work, "
+        "and managing project documentation.\n\n"
+
+        "To begin:\n\n"
+
+        "1. Open AI Settings and configure a preferred AI provider.\n"
+        "2. Create a new job from the dashboard.\n"
+        "3. Add a P&ID PDF and optional scope documentation.\n"
+        "4. Run the scan and review the generated results.\n"
+        "5. Verify all BOM entries, quantities, scope items and warnings before use.\n\n"
+
+        "Engineering App is an engineering review tool. AI-generated content, "
+        "scope recommendations and BOM information must always be reviewed and "
+        "verified against the project drawings, specifications and site requirements.\n\n"
+
+        "Use the Getting Started guide for detailed workflow instructions."
+    ),
     "Getting started": (
         "1. Select Start a New Job, enter a job number and add a P&ID PDF. "
         "Add a scope file when one is available.\n\n"

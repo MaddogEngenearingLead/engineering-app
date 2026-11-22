@@ -32,7 +32,13 @@ from app.services.updater import (
     UpdateInfo, apply_update, can_self_update, check_for_update, check_for_update_status, cleanup_update,
     download_update,
 )
-from app.version import __version__
+from app.version import (
+    APP_NAME,
+    __version__,
+    __build_date__,
+    PUBLISHER,
+    REPOSITORY_NAME,
+)
 
 
 PORTABLE_DIR_NAME = "Jobs"
@@ -101,7 +107,7 @@ def parse_dropped_files(tk_root, data: str) -> list[str]:
 class JobManagerApp(TkinterDnD.Tk):
     def __init__(self):
         super().__init__()
-        self.title(f"Job Manager App v{__version__}")
+        self.title(f"{APP_NAME} v{__version__}")
         self.geometry("640x500")
         self.scroller = ScrollFrame(self, padx=20, pady=20)
         self.scroller.pack(side="bottom", fill="both", expand=True)
@@ -229,11 +235,31 @@ class JobManagerApp(TkinterDnD.Tk):
 
     def show_dashboard(self):
         self.clear_screen()
+
         header = tk.Frame(self.body)
         header.pack(fill="x", pady=(0, 10))
-        tk.Label(header, text="Dashboard", font=("Arial", 18, "bold")).pack(side="left")
-        tk.Button(header, text="Help", command=lambda: HelpWindow(self),
-                  relief="groove").pack(side="right", padx=(0, 6))
+
+        branding = tk.Frame(header)
+        branding.pack(side="left")
+
+        tk.Label(
+            branding,
+            text=APP_NAME,
+            font=("Arial", 18, "bold")
+        ).pack(anchor="w")
+
+        tk.Label(
+            branding,
+            text=f"Version {__version__}",
+            fg="#666666"
+        ).pack(anchor="w")
+
+        tk.Button(
+            header,
+            text="About",
+            command=self.show_about_dialog,
+            relief="groove"
+        ).pack(side="right", padx=(0, 6))
         tk.Button(header, text="AI settings", command=lambda: AISettingsWindow(self),
                   relief="groove").pack(side="right", padx=(0, 6))
         tk.Button(header, text="Check for updates", command=self.check_updates_manually,
@@ -334,9 +360,21 @@ class JobManagerApp(TkinterDnD.Tk):
         except Exception as exc:
             messagebox.showerror("Error", f"Could not open {path}: {exc}")
 
-    # ------------------------------------------------------------------
-    # Background scan
-    # ------------------------------------------------------------------
+    def show_about_dialog(self):
+        messagebox.showinfo(
+            f"About {APP_NAME}",
+            (
+                f"{APP_NAME}\n\n"
+                f"Version: {__version__}\n"
+                f"Build Date: {__build_date__}\n"
+                f"Publisher: {PUBLISHER}\n"
+                f"Repository: {REPOSITORY_NAME}"
+            ),
+            parent=self,
+        )
+# ------------------------------------------------------------------
+# Background scan
+# ------------------------------------------------------------------
 
     def open_review(self, job_number: str):
         window = ReviewWindow(self, self.jobs, job_number, on_saved=self.show_dashboard)
