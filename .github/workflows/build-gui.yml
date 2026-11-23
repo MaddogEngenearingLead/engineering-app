@@ -47,10 +47,13 @@ jobs:
           REF_NAME: ${{ github.ref_name }}
           REF_TYPE: ${{ github.ref_type }}
         run: |
-          import os, pathlib
+          import os, pathlib, re
           if os.environ["REF_TYPE"] == "tag":
               version = os.environ["REF_NAME"].lstrip("v")
-              pathlib.Path("app/version.py").write_text(f'__version__ = "{version}"\n')
+              path = pathlib.Path("app/version.py")
+              text = path.read_text()
+              text = re.sub(r'^__version__\s*=.*$', f'__version__ = "{version}"', text, count=1, flags=re.MULTILINE)
+              path.write_text(text)
           token = os.environ.get("UPDATE_TOKEN", "")
           cfg = pathlib.Path("app/update_config.py")
           cfg.write_text(cfg.read_text().replace('UPDATE_TOKEN = ""', f'UPDATE_TOKEN = "{token}"'))
