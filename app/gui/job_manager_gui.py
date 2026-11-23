@@ -268,7 +268,7 @@ class JobManagerApp(TkinterDnD.Tk):
 
         tk.Button(
             header,
-            text="Feedback",
+            text="Submit Feedback",
             command=lambda: FeedbackWindow(self),
             relief="groove"
         ).pack(side="right", padx=(0, 6))
@@ -675,8 +675,8 @@ class FeedbackWindow(tk.Toplevel):
     def __init__(self, parent):
         super().__init__(parent)
 
-        self.title("Feedback")
-        self.geometry("700x500")
+        self.title("Submit Feedback")
+        self.geometry("950x800")
 
         self.scroller = ScrollFrame(self, padx=20, pady=20)
         self.scroller.pack(fill="both", expand=True)
@@ -685,58 +685,101 @@ class FeedbackWindow(tk.Toplevel):
 
         tk.Label(
             self.body,
-            text="Submit Feedback",
+            text="Engineering App Evaluation Form",
             font=("Arial", 16, "bold")
-        ).pack(anchor="w")
+        ).pack(anchor="w", pady=(0, 10))
 
-        tk.Label(
+        tk.Label(self.body, text="User Name *").pack(anchor="w")
+        self.user_name = tk.Entry(self.body, width=60)
+        self.user_name.pack(anchor="w", pady=(0, 10))
+
+        tk.Label(self.body, text="Company *").pack(anchor="w")
+        self.company = tk.Entry(self.body, width=60)
+        self.company.pack(anchor="w", pady=(0, 10))
+
+        tk.Label(self.body, text="Department").pack(anchor="w")
+        self.department = tk.Entry(self.body, width=60)
+        self.department.pack(anchor="w", pady=(0, 20))
+
+        tk.Label(self.body, text="Most Useful Feature").pack(anchor="w")
+        self.most_useful_feature = tk.Text(self.body, height=3, width=90)
+        self.most_useful_feature.pack(fill="x", pady=(0, 10))
+
+        tk.Label(self.body, text="Biggest Issue").pack(anchor="w")
+        self.biggest_issue = tk.Text(self.body, height=3, width=90)
+        self.biggest_issue.pack(fill="x", pady=(0, 10))
+
+        tk.Label(self.body, text="Requested Enhancements").pack(anchor="w")
+        self.requested_enhancements = tk.Text(self.body, height=4, width=90)
+        self.requested_enhancements.pack(fill="x", pady=(0, 10))
+
+        tk.Label(self.body, text="Additional Comments").pack(anchor="w")
+        self.additional_comments = tk.Text(self.body, height=5, width=90)
+        self.additional_comments.pack(fill="x", pady=(0, 20))
+
+        ratings_frame = tk.LabelFrame(
             self.body,
-            text="Help improve Engineering App by submitting feedback, bug reports, or feature requests.",
-            wraplength=620,
-            justify="left"
-        ).pack(anchor="w", pady=(5, 15))
-
-        tk.Label(self.body, text="Feedback Type:").pack(anchor="w")
-
-        self.feedback_type = ttk.Combobox(
-            self.body,
-            state="readonly",
-            values=[
-                "Bug Report",
-                "Feature Request",
-                "Workflow Improvement",
-                "General Feedback",
-            ],
-            width=40
+            text="Ratings (1-10)"
         )
-        self.feedback_type.pack(anchor="w", pady=(5, 10))
-        self.feedback_type.set("General Feedback")
+        ratings_frame.pack(fill="x", pady=(0, 20))
 
-        tk.Label(self.body, text="Details:").pack(anchor="w")
+        self.pid_processing = tk.IntVar(value=5)
+        self.scope_analysis = tk.IntVar(value=5)
+        self.bom_generation = tk.IntVar(value=5)
+        self.drawing_review = tk.IntVar(value=5)
+        self.overall_experience = tk.IntVar(value=5)
 
-        self.details = tk.Text(
-            self.body,
-            width=80,
-            height=15,
-            wrap="word"
-        )
-        self.details.pack(fill="both", expand=True, pady=(5, 15))
+        rating_fields = [
+            ("P&ID Processing", self.pid_processing),
+            ("Scope Analysis", self.scope_analysis),
+            ("BOM Generation", self.bom_generation),
+            ("Drawing Review", self.drawing_review),
+            ("Overall Experience", self.overall_experience),
+        ]
+
+        for row, (label, variable) in enumerate(rating_fields):
+
+            tk.Label(
+                ratings_frame,
+                text=label,
+                width=20,
+                anchor="w"
+            ).grid(row=row, column=0, sticky="w", padx=10, pady=5)
+
+            rating_row = tk.Frame(ratings_frame)
+            rating_row.grid(row=row, column=1, sticky="w")
+
+            for value in range(1, 11):
+
+                item = tk.Frame(rating_row)
+                item.pack(side="left", padx=2)
+
+                tk.Label(
+                    item,
+                    text=str(value)
+                ).pack()
+
+                tk.Radiobutton(
+                    item,
+                    variable=variable,
+                    value=value
+                ).pack()
 
         button_row = tk.Frame(self.body)
-        button_row.pack(fill="x")
+        button_row.pack(fill="x", pady=(10, 0))
 
         tk.Button(
             button_row,
             text="Cancel",
             command=self.destroy,
-            width=10
+            width=12
         ).pack(side="right", padx=(6, 0))
 
         tk.Button(
             button_row,
-            text="Save",
+            text="Save Evaluation",
             command=self.save_feedback,
-            width=10,
+            width=16,
             bg="#2196F3",
             fg="white"
         ).pack(side="right")
@@ -745,45 +788,68 @@ class FeedbackWindow(tk.Toplevel):
         import json
         from datetime import datetime, timezone
 
-        text = self.details.get("1.0", "end").strip()
-
-        if not text:
+        if not self.user_name.get().strip():
             messagebox.showwarning(
-                "Feedback",
-                "Please enter feedback before saving.",
+                "Validation",
+                "User Name is required.",
                 parent=self
             )
             return
 
-        feedback_dir = self.master.jobs.base_dir.resolve().parent / "feedback"
-        feedback_dir.mkdir(parents=True, exist_ok=True)
+        if not self.company.get().strip():
+            messagebox.showwarning(
+                "Validation",
+                "Company is required.",
+                parent=self
+            )
+            return
+
+        evaluation_dir = (
+            self.master.jobs.base_dir.resolve().parent /
+            "evaluations"
+        )
+
+        evaluation_dir.mkdir(
+            parents=True,
+            exist_ok=True
+        )
 
         timestamp = datetime.now(timezone.utc)
 
-        feedback = {
+        data = {
             "timestamp_utc": timestamp.isoformat(),
-            "type": self.feedback_type.get(),
-            "text": text,
+            "user_name": self.user_name.get().strip(),
+            "company": self.company.get().strip(),
+            "department": self.department.get().strip(),
+            "most_useful_feature": self.most_useful_feature.get("1.0", "end").strip(),
+            "biggest_issue": self.biggest_issue.get("1.0", "end").strip(),
+            "requested_enhancements": self.requested_enhancements.get("1.0", "end").strip(),
+            "additional_comments": self.additional_comments.get("1.0", "end").strip(),
+            "ratings": {
+                "pid_processing": self.pid_processing.get(),
+                "scope_analysis": self.scope_analysis.get(),
+                "bom_generation": self.bom_generation.get(),
+                "drawing_review": self.drawing_review.get(),
+                "overall_experience": self.overall_experience.get(),
+            }
         }
 
-        filename = (
-            f"feedback-{timestamp.strftime('%Y%m%d-%H%M%S')}.json"
+        path = (
+            evaluation_dir /
+            f"evaluation-{timestamp.strftime('%Y%m%d-%H%M%S')}.json"
         )
 
-        path = feedback_dir / filename
-
         with path.open("w", encoding="utf-8") as file:
-            json.dump(feedback, file, indent=2)
+            json.dump(data, file, indent=2)
             file.write("\n")
 
         messagebox.showinfo(
-            "Feedback Saved",
-            f"Feedback saved to:\n{path}",
+            "Evaluation Saved",
+            f"Saved:\n{path}",
             parent=self
         )
 
         self.destroy()
-
 class NewJobWindow(tk.Toplevel):
     def __init__(self, parent, job_number: str = "", files: dict | None = None):
         super().__init__(parent)
