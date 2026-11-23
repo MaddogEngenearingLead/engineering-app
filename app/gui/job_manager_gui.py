@@ -265,10 +265,19 @@ class JobManagerApp(TkinterDnD.Tk):
             command=self.show_about_dialog,
             relief="groove"
         ).pack(side="right", padx=(0, 6))
+
+        tk.Button(
+            header,
+            text="Feedback",
+            command=lambda: FeedbackWindow(self),
+            relief="groove"
+        ).pack(side="right", padx=(0, 6))
+
         tk.Button(header, text="AI settings", command=lambda: AISettingsWindow(self),
-                  relief="groove").pack(side="right", padx=(0, 6))
+                relief="groove").pack(side="right", padx=(0, 6))
+
         tk.Button(header, text="Check for updates", command=self.check_updates_manually,
-                  relief="groove").pack(side="right")
+                relief="groove").pack(side="right")
         tk.Button(self.body, text="Open debug reports", command=self.open_debug_reports).pack(anchor="e")
         tk.Button(self.body, text="+ Start a New Job", command=self.open_new_job_window,
                   width=20, bg="#2196F3", fg="white").pack(pady=10)
@@ -386,10 +395,9 @@ class JobManagerApp(TkinterDnD.Tk):
 
         self.settings["welcome_shown"] = True
         ai_review.save_settings(self.settings)
-
-    # ------------------------------------------------------------------
-    # Background scan
-    # ------------------------------------------------------------------
+        # ------------------------------------------------------------------
+        # Background scan
+        # ------------------------------------------------------------------
     def open_review(self, job_number: str):
         window = ReviewWindow(self, self.jobs, job_number, on_saved=self.show_dashboard)
         window.job_number_for_delete = job_number
@@ -663,6 +671,118 @@ class HelpWindow(tk.Toplevel):
             if title == selected:
                 self.tabs.select(frame)
 
+class FeedbackWindow(tk.Toplevel):
+    def __init__(self, parent):
+        super().__init__(parent)
+
+        self.title("Feedback")
+        self.geometry("700x500")
+
+        self.scroller = ScrollFrame(self, padx=20, pady=20)
+        self.scroller.pack(fill="both", expand=True)
+
+        self.body = self.scroller.body
+
+        tk.Label(
+            self.body,
+            text="Submit Feedback",
+            font=("Arial", 16, "bold")
+        ).pack(anchor="w")
+
+        tk.Label(
+            self.body,
+            text="Help improve Engineering App by submitting feedback, bug reports, or feature requests.",
+            wraplength=620,
+            justify="left"
+        ).pack(anchor="w", pady=(5, 15))
+
+        tk.Label(self.body, text="Feedback Type:").pack(anchor="w")
+
+        self.feedback_type = ttk.Combobox(
+            self.body,
+            state="readonly",
+            values=[
+                "Bug Report",
+                "Feature Request",
+                "Workflow Improvement",
+                "General Feedback",
+            ],
+            width=40
+        )
+        self.feedback_type.pack(anchor="w", pady=(5, 10))
+        self.feedback_type.set("General Feedback")
+
+        tk.Label(self.body, text="Details:").pack(anchor="w")
+
+        self.details = tk.Text(
+            self.body,
+            width=80,
+            height=15,
+            wrap="word"
+        )
+        self.details.pack(fill="both", expand=True, pady=(5, 15))
+
+        button_row = tk.Frame(self.body)
+        button_row.pack(fill="x")
+
+        tk.Button(
+            button_row,
+            text="Cancel",
+            command=self.destroy,
+            width=10
+        ).pack(side="right", padx=(6, 0))
+
+        tk.Button(
+            button_row,
+            text="Save",
+            command=self.save_feedback,
+            width=10,
+            bg="#2196F3",
+            fg="white"
+        ).pack(side="right")
+
+    def save_feedback(self):
+        import json
+        from datetime import datetime, timezone
+
+        text = self.details.get("1.0", "end").strip()
+
+        if not text:
+            messagebox.showwarning(
+                "Feedback",
+                "Please enter feedback before saving.",
+                parent=self
+            )
+            return
+
+        feedback_dir = self.master.jobs.base_dir.resolve().parent / "feedback"
+        feedback_dir.mkdir(parents=True, exist_ok=True)
+
+        timestamp = datetime.now(timezone.utc)
+
+        feedback = {
+            "timestamp_utc": timestamp.isoformat(),
+            "type": self.feedback_type.get(),
+            "text": text,
+        }
+
+        filename = (
+            f"feedback-{timestamp.strftime('%Y%m%d-%H%M%S')}.json"
+        )
+
+        path = feedback_dir / filename
+
+        with path.open("w", encoding="utf-8") as file:
+            json.dump(feedback, file, indent=2)
+            file.write("\n")
+
+        messagebox.showinfo(
+            "Feedback Saved",
+            f"Feedback saved to:\n{path}",
+            parent=self
+        )
+
+        self.destroy()
 
 class NewJobWindow(tk.Toplevel):
     def __init__(self, parent, job_number: str = "", files: dict | None = None):
