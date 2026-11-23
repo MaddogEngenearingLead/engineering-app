@@ -38,7 +38,7 @@ class AIError(Exception):
 # ---------------------------------------------------------------- settings
 
 DEFAULTS = {"enabled": True, "provider": "gemini", "api_key": "", "api_keys": {},
-            "models": {}, "base_urls": {}}
+            "models": {}, "base_urls": {}, "welcome_shown": False,}
 
 
 def settings_path() -> Path:

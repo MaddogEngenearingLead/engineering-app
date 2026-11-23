@@ -39,7 +39,7 @@ from app.version import (
     PUBLISHER,
     REPOSITORY_NAME,
 )
-
+from app.services import ai_review
 
 PORTABLE_DIR_NAME = "Jobs"
 
@@ -117,11 +117,16 @@ class JobManagerApp(TkinterDnD.Tk):
         self.update_info: UpdateInfo | None = None
         self.updating = False
         self.update_status = ""
+
+        self.settings = ai_review.load_settings()
+
         self.show_dashboard()
         threading.Thread(target=self._check_updates, daemon=True).start()
         from app.services.ollama_runtime import prepare_local_fallback
 
         prepare_local_fallback()
+        
+        self.after(500, self._show_welcome_if_needed)
 
     def clear_screen(self):
         for widget in self.body.winfo_children():
@@ -372,10 +377,19 @@ class JobManagerApp(TkinterDnD.Tk):
             ),
             parent=self,
         )
-# ------------------------------------------------------------------
-# Background scan
-# ------------------------------------------------------------------
 
+    def _show_welcome_if_needed(self):
+        if self.settings.get("welcome_shown", False):
+            return
+
+        HelpWindow(self, "Welcome")
+
+        self.settings["welcome_shown"] = True
+        ai_review.save_settings(self.settings)
+
+    # ------------------------------------------------------------------
+    # Background scan
+    # ------------------------------------------------------------------
     def open_review(self, job_number: str):
         window = ReviewWindow(self, self.jobs, job_number, on_saved=self.show_dashboard)
         window.job_number_for_delete = job_number
