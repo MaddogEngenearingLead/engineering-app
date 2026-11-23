@@ -47,16 +47,60 @@ jobs:
           REF_NAME: ${{ github.ref_name }}
           REF_TYPE: ${{ github.ref_type }}
         run: |
-          import os, pathlib, re
+          import os
+          import pathlib
+          import re
+
+          version_file = pathlib.Path("app/version.py")
+          version_text = version_file.read_text(encoding="utf-8")
+
           if os.environ["REF_TYPE"] == "tag":
-              version = os.environ["REF_NAME"].lstrip("v")
-              path = pathlib.Path("app/version.py")
-              text = path.read_text()
-              text = re.sub(r'^__version__\s*=.*$', f'__version__ = "{version}"', text, count=1, flags=re.MULTILINE)
-              path.write_text(text)
+              version = os.environ["REF_NAME"].removeprefix("v")
+              if not re.fullmatch(r"[0-9]+(?:\.[0-9]+)*", version):
+                  raise SystemExit(f"Invalid release version: {version}")
+
+              pattern = r'^__version__\s*=\s*["\'][^"\']*["\']\s*$'
+              replacement = f'__version__ = "{version}"'
+              version_text, count = re.subn(
+                  pattern,
+                  replacement,
+                  version_text,
+                  count=1,
+                  flags=re.MULTILINE,
+              )
+              if count != 1:
+                  raise SystemExit("app/version.py does not contain exactly one __version__ assignment")
+
+              version_file.write_text(version_text, encoding="utf-8")
+
+          required = (
+              "APP_NAME",
+              "__version__",
+              "__build_date__",
+              "PUBLISHER",
+              "REPOSITORY_NAME",
+          )
+          namespace = {}
+          exec(
+              compile(version_file.read_text(encoding="utf-8"), str(version_file), "exec"),
+              namespace,
+          )
+          missing = [name for name in required if name not in namespace]
+          if missing:
+              raise SystemExit(
+                  "Missing application metadata in app/version.py: " + ", ".join(missing)
+              )
+
           token = os.environ.get("UPDATE_TOKEN", "")
           cfg = pathlib.Path("app/update_config.py")
-          cfg.write_text(cfg.read_text().replace('UPDATE_TOKEN = ""', f'UPDATE_TOKEN = "{token}"'))
+          cfg_text = cfg.read_text(encoding="utf-8")
+          placeholder = 'UPDATE_TOKEN = ""'
+          if placeholder not in cfg_text:
+              raise SystemExit("Could not find UPDATE_TOKEN placeholder in app/update_config.py")
+          cfg.write_text(
+              cfg_text.replace(placeholder, f'UPDATE_TOKEN = "{token}"', 1),
+              encoding="utf-8",
+          )
       - run: pip install -r requirements.txt pyinstaller
       - uses: mamba-org/setup-micromamba@v2
         id: ocr-env
